@@ -56,10 +56,24 @@ function normalizeItems(items) {
   return [];
 }
 
+// 데이터센터(클라우드) IP에서 오는 요청에 대해 apis.data.go.kr 앞단 WAF가 더 깐깐하게 군다.
+// 한국 가정용 회선에서는 Node 기본 UA로도 통과하지만, Vercel(서울 리전이어도)에서는 403이 났다.
+// franchise.ftc.go.kr도 UA 없는 요청을 막았던 전례가 있어 브라우저 UA를 고정으로 붙인다.
+const UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+
 async function call(operation, params) {
   const url = buildUrl(operation, params);
-  const res = await fetch(url);
+  const res = await fetch(url, {
+    headers: { "User-Agent": UA, Accept: "application/json, text/plain, */*" },
+  });
   if (!res.ok) {
+    // 403은 키가 아니라 호출 IP/헤더를 막힌 경우가 많아서 원인을 구분해 알려준다.
+    if (res.status === 403) {
+      throw new Error(
+        `상권정보 API가 요청을 거부했습니다 (HTTP 403, ${operation}). 서비스키가 아니라 호출 IP가 차단된 것일 수 있습니다 — 공공데이터포털은 해외/데이터센터 IP에 제한을 겁니다.`
+      );
+    }
     throw new Error(`상권정보 API 요청 실패: HTTP ${res.status} (${operation})`);
   }
   let json;
