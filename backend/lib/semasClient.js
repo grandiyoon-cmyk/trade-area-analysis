@@ -68,13 +68,15 @@ async function call(operation, params) {
     headers: { "User-Agent": UA, Accept: "application/json, text/plain, */*" },
   });
   if (!res.ok) {
-    // 403은 키가 아니라 호출 IP/헤더를 막힌 경우가 많아서 원인을 구분해 알려준다.
-    if (res.status === 403) {
-      throw new Error(
-        `상권정보 API가 요청을 거부했습니다 (HTTP 403, ${operation}). 서비스키가 아니라 호출 IP가 차단된 것일 수 있습니다 — 공공데이터포털은 해외/데이터센터 IP에 제한을 겁니다.`
-      );
-    }
-    throw new Error(`상권정보 API 요청 실패: HTTP ${res.status} (${operation})`);
+    // 상태코드만으로는 원인을 못 좁힌다(403이 키 문제인지 IP 차단인지 WAF인지 구분이 안 됨).
+    // data.go.kr은 실패해도 본문에 사유를 담아주는 편이라, 앞부분을 잘라 에러에 함께 실어
+    // 배포 환경에서도 로그만 보고 진단할 수 있게 한다. 서비스키는 URL에만 있고 본문엔
+    // 들어가지 않으므로 이대로 노출해도 안전하다.
+    const detail = await res.text().catch(() => "");
+    const snippet = detail.replace(/\s+/g, " ").trim().slice(0, 300);
+    throw new Error(
+      `상권정보 API 요청 실패: HTTP ${res.status} (${operation})` + (snippet ? ` — 응답: ${snippet}` : "")
+    );
   }
   let json;
   try {
