@@ -27,6 +27,11 @@ export function getSql() {
 
 // 서버리스 함수는 요청마다 콜드 스타트될 수 있어 매번 CREATE TABLE을 돌릴 순 없지만,
 // 같은 웜 인스턴스 안에서는 한 번만 실행되도록 프로미스를 메모이즈해둔다.
+//
+// 단, **실패한 프로미스는 메모이즈하면 안 된다.** Neon은 유휴 상태에서 깨어나는 데 잠깐
+// 걸려서 콜드 스타트 첫 쿼리가 실패할 수 있는데, 거부된 프로미스를 그대로 들고 있으면
+// 그 웜 인스턴스가 재활용될 때까지 즐겨찾기와 DB 캐시가 통째로 죽는다. 실패하면 캐시를
+// 비워 다음 요청이 다시 시도하게 한다.
 let schemaReady = null;
 export function ensureSchema() {
   if (!hasDb()) return Promise.resolve(false);
@@ -54,7 +59,10 @@ export function ensureSchema() {
         )
       `;
       return true;
-    })();
+    })().catch((err) => {
+      schemaReady = null;
+      throw err;
+    });
   }
   return schemaReady;
 }

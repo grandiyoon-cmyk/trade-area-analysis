@@ -123,6 +123,24 @@ function upjongFilter(query) {
   return { indsLclsCd: lclsCd || undefined, indsMclsCd: mclsCd || undefined, indsSclsCd: sclsCd || undefined };
 }
 
+// 분석 결과 캐시 유효기간. 상가업소 데이터는 소진공이 **분기별**로 갱신하므로(응답 헤더의
+// stdrYm으로 확인 가능) 일주일 캐시는 신선도 면에서 넉넉히 안전하다.
+//
+// 이게 있어야 하는 진짜 이유는 속도가 아니라 **일일 호출한도**다. 분석 1회는 최대 maxPages(10)회
+// 실API 호출이고 공공데이터포털 개발계정은 보통 일 1,000회다 — 캐시가 없으면 몇 사람이
+// 백 번쯤 돌리는 것만으로 하루치가 소진돼 앱 전체가 멈춘다.
+const TRADE_AREA_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** 같은 조건이면 같은 문자열이 나오도록 — 캐시 키. maxPages가 다르면 결과 표본도 다르니 키에 포함한다. */
+function tradeAreaCacheKey(parts) {
+  return parts.map((v) => (v == null || v === "" ? "-" : String(v))).join("_");
+}
+
+/** 조회가 이상할 때 캐시를 우회할 escape hatch (`?refresh=1`). 7일 캐시를 기다릴 필요 없이 다시 받는다. */
+function wantsFresh(query) {
+  return query.refresh === "1" || query.refresh === "true";
+}
+
 /** 시도(ctprvnCd) / 시군구(signguCd) / 행정동(adongCd) 단위 상권분석 */
 app.get("/api/trade-area/region", async (req, res) => {
   const { divId, code } = req.query;
@@ -132,11 +150,17 @@ app.get("/api/trade-area/region", async (req, res) => {
   }
   try {
     const filter = upjongFilter(req.query);
-    const { items, totalCount, fetchedCount, capped, stdrYm } = await fetchAllPages(
-      (pageNo) => fetchStoresInRegion({ divId, key: code, ...filter, pageNo }),
-      { maxPages }
+    const key = tradeAreaCacheKey([divId, code, filter.indsLclsCd, filter.indsMclsCd, filter.indsSclsCd, `p${maxPages}`]);
+    const compute = async () => {
+      const { items, totalCount, fetchedCount, capped, stdrYm } = await fetchAllPages(
+        (pageNo) => fetchStoresInRegion({ divId, key: code, ...filter, pageNo }),
+        { maxPages }
+      );
+      return analyzeStores(items, { totalCount, fetchedCount, capped, stdrYm });
+    };
+    res.json(
+      wantsFresh(req.query) ? await compute() : await cached("trade-area-region", key, compute, { ttlMs: TRADE_AREA_TTL_MS })
     );
-    res.json(analyzeStores(items, { totalCount, fetchedCount, capped, stdrYm }));
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
@@ -153,11 +177,17 @@ app.get("/api/trade-area/radius", async (req, res) => {
   }
   try {
     const filter = upjongFilter(req.query);
-    const { items, totalCount, fetchedCount, capped, stdrYm } = await fetchAllPages(
-      (pageNo) => fetchStoresInRadius({ cx, cy, radius, ...filter, pageNo }),
-      { maxPages }
+    const key = tradeAreaCacheKey([cx, cy, radius, filter.indsLclsCd, filter.indsMclsCd, filter.indsSclsCd, `p${maxPages}`]);
+    const compute = async () => {
+      const { items, totalCount, fetchedCount, capped, stdrYm } = await fetchAllPages(
+        (pageNo) => fetchStoresInRadius({ cx, cy, radius, ...filter, pageNo }),
+        { maxPages }
+      );
+      return analyzeStores(items, { totalCount, fetchedCount, capped, stdrYm });
+    };
+    res.json(
+      wantsFresh(req.query) ? await compute() : await cached("trade-area-radius", key, compute, { ttlMs: TRADE_AREA_TTL_MS })
     );
-    res.json(analyzeStores(items, { totalCount, fetchedCount, capped, stdrYm }));
   } catch (err) {
     res.status(502).json({ error: err.message });
   }

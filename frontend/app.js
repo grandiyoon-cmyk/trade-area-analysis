@@ -22,8 +22,13 @@
   function pct(n, digits = 0) {
     return n == null ? "—" : (n * 100).toFixed(digits) + "%";
   }
+  // innerHTML 템플릿에 값을 끼워 넣기 전에 반드시 통과시킨다.
+  // 상호명은 사업자가 등록한 자유 문자열이라 실제로 특수문자가 들어온다(예: "민기획&네온",
+  // "돈까스&우.찌" — 종로 표본 2000건 중 9건). 에러 배너에는 외부 API 응답 본문이
+  // 그대로 실려 오기도 한다. 이스케이프 없이 넣으면 마크업이 깨지고, 그 틈이 곧 XSS다.
+  const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
   function escapeText(s) {
-    return String(s ?? "");
+    return String(s ?? "").replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]);
   }
   function cssVar(name) {
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -128,10 +133,17 @@
       fillSelect(selSigungu, [], { valueKey: "cd", labelKey: "nm", placeholder: "시·도 먼저 선택" });
       return;
     }
-    const r = await api("/api/regions/sigungu?sidoCd=" + encodeURIComponent(cd));
-    state.sigungu = r.items;
-    fillSelect(selSigungu, state.sigungu, { valueKey: "signguCd", labelKey: "signguNm", placeholder: "시·군·구 선택" });
-    selSigungu.disabled = false;
+    try {
+      const r = await api("/api/regions/sigungu?sidoCd=" + encodeURIComponent(cd));
+      state.sigungu = r.items;
+      fillSelect(selSigungu, state.sigungu, { valueKey: "signguCd", labelKey: "signguNm", placeholder: "시·군·구 선택" });
+      selSigungu.disabled = false;
+    } catch {
+      // 실패를 삼키지 않고 드롭다운 placeholder로 알린다 — 예전엔 여기서 프로미스가 그냥
+      // 거부돼 사용자에겐 "아무 반응 없이 멈춘 드롭다운"으로만 보였다.
+      selSigungu.disabled = true;
+      fillSelect(selSigungu, [], { valueKey: "cd", labelKey: "nm", placeholder: "시·군·구 불러오기 실패" });
+    }
   }
 
   async function selectSigungu(cd, { selectEl = true } = {}) {
@@ -173,7 +185,13 @@
   const radiusVal = document.getElementById("radiusVal");
 
   async function loadLandmarks() {
-    const r = await api("/api/landmarks");
+    let r;
+    try {
+      r = await api("/api/landmarks");
+    } catch {
+      landmarkRow.innerHTML = `<span class="fav-hint">즐겨찾는 위치를 불러오지 못했습니다 — 경도·위도를 직접 입력하세요.</span>`;
+      return;
+    }
     state.landmarks = r.items;
     landmarkRow.innerHTML = "";
     state.landmarks.forEach((lm) => {
@@ -223,10 +241,15 @@
       selMcls.disabled = true;
       return;
     }
-    const r = await api("/api/categories/middle?lclsCd=" + encodeURIComponent(cd));
-    state.mcls = r.items;
-    fillSelect(selMcls, state.mcls, { valueKey: "indsMclsCd", labelKey: "indsMclsNm", placeholder: "중분류 전체" });
-    selMcls.disabled = false;
+    try {
+      const r = await api("/api/categories/middle?lclsCd=" + encodeURIComponent(cd));
+      state.mcls = r.items;
+      fillSelect(selMcls, state.mcls, { valueKey: "indsMclsCd", labelKey: "indsMclsNm", placeholder: "중분류 전체" });
+      selMcls.disabled = false;
+    } catch {
+      selMcls.disabled = true;
+      fillSelect(selMcls, [], { valueKey: "cd", labelKey: "nm", placeholder: "중분류 불러오기 실패" });
+    }
   }
 
   async function selectMcls(cd, { selectEl = true } = {}) {
@@ -238,10 +261,15 @@
       selScls.disabled = true;
       return;
     }
-    const r = await api(`/api/categories/small?lclsCd=${encodeURIComponent(state.selLcls)}&mclsCd=${encodeURIComponent(cd)}`);
-    state.scls = r.items;
-    fillSelect(selScls, state.scls, { valueKey: "indsSclsCd", labelKey: "indsSclsNm", placeholder: "소분류 전체" });
-    selScls.disabled = false;
+    try {
+      const r = await api(`/api/categories/small?lclsCd=${encodeURIComponent(state.selLcls)}&mclsCd=${encodeURIComponent(cd)}`);
+      state.scls = r.items;
+      fillSelect(selScls, state.scls, { valueKey: "indsSclsCd", labelKey: "indsSclsNm", placeholder: "소분류 전체" });
+      selScls.disabled = false;
+    } catch {
+      selScls.disabled = true;
+      fillSelect(selScls, [], { valueKey: "cd", labelKey: "nm", placeholder: "소분류 불러오기 실패" });
+    }
   }
 
   function selectScls(cd, { selectEl = true } = {}) {
@@ -463,7 +491,8 @@
     const tile = document.createElement("div");
     tile.className = "kpi-tile";
     tile.innerHTML =
-      `<div class="kpi-label">${escapeText(label)}</div><div class="kpi-value">${value}</div>` +
+      // value에도 API에서 온 문자열이 들어온다("최다 업종(대분류)" 타일의 업종명) — 함께 이스케이프.
+      `<div class="kpi-label">${escapeText(label)}</div><div class="kpi-value">${escapeText(value)}</div>` +
       (sub ? `<div class="kpi-sub">${escapeText(sub)}</div>` : "");
     return tile;
   }

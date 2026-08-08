@@ -77,9 +77,11 @@ function normalizeItems(items) {
   return [];
 }
 
-// 데이터센터(클라우드) IP에서 오는 요청에 대해 apis.data.go.kr 앞단 WAF가 더 깐깐하게 군다.
-// 한국 가정용 회선에서는 Node 기본 UA로도 통과하지만, Vercel(서울 리전이어도)에서는 403이 났다.
-// franchise.ftc.go.kr도 UA 없는 요청을 막았던 전례가 있어 브라우저 UA를 고정으로 붙인다.
+// 브라우저 UA를 고정으로 붙인다. 일부 국내 공공 사이트(franchise.ftc.go.kr 등)가 UA 없는
+// 요청을 막았던 전례가 있어 예방 차원으로 두는 것이고, **apis.data.go.kr에 이게 필요하다는
+// 근거는 없다.** (배포 초기의 403을 WAF/UA 탓으로 의심해 넣었지만, 실제 원인은 Vercel
+// 환경변수에 잘린 채로 들어간 서비스키였다 — UA를 붙여도 403은 그대로였다. 지우고 싶다면
+// 지워도 되지만, 지우기 전에 배포 환경에서 한 번 확인해보길.)
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
