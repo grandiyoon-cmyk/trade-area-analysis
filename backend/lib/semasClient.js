@@ -12,6 +12,8 @@
 //   배열이거나(REST 스타일), { item: [...] } 또는 { item: {...} }(결과 1건일 때, XML→JSON
 //   변환 특유의 함정)로 오기도 해서 normalizeItems()에서 세 가지를 모두 받아준다.
 
+import { createHash } from "node:crypto";
+
 const BASE = "https://apis.data.go.kr/B553077/api/open/sdsc2";
 
 // 공공데이터포털 공통 에러코드 중 실제로 마주치기 쉬운 것들만 사람이 읽을 메시지로 매핑.
@@ -27,7 +29,9 @@ const RESULT_CODE_MESSAGES = {
 };
 
 function requireServiceKey() {
-  const key = process.env.SEMAS_SERVICE_KEY;
+  // 웹 콘솔(Vercel 등)에 붙여넣을 때 앞뒤 공백이나 줄바꿈이 딸려 들어가는 일이 잦은데,
+  // 그대로 두면 키가 통째로 "등록되지 않은 서비스키"로 거부된다. 먼저 다듬는다.
+  const key = process.env.SEMAS_SERVICE_KEY?.trim();
   if (!key || key.includes("여기에_발급받은")) {
     throw new Error("SEMAS_SERVICE_KEY가 설정되지 않았습니다. backend/.env 파일을 확인하세요.");
   }
@@ -35,6 +39,23 @@ function requireServiceKey() {
   // 기대한다(URLSearchParams가 알아서 한 번 인코딩하므로). 혹시 이미 퍼센트 인코딩된
   // "인코딩" 키를 그대로 붙여넣었다면 한 번 풀어서 이중 인코딩(%2B → %252B 등)을 막는다.
   return /%[0-9A-Fa-f]{2}/.test(key) ? decodeURIComponent(key) : key;
+}
+
+/**
+ * 키를 노출하지 않고 "로컬과 배포 환경의 키가 같은 값인지"만 대조하기 위한 지문.
+ * 길이 + SHA-256 앞 8자리만 내보내므로 이 값으로 키를 역산할 수 없다.
+ */
+export function serviceKeyFingerprint() {
+  const raw = process.env.SEMAS_SERVICE_KEY;
+  if (!raw) return { present: false };
+  const trimmed = raw.trim();
+  return {
+    present: true,
+    rawLength: raw.length,
+    trimmedLength: trimmed.length,
+    hadWhitespace: raw !== trimmed,
+    sha8: createHash("sha256").update(trimmed).digest("hex").slice(0, 8),
+  };
 }
 
 function buildUrl(operation, params) {

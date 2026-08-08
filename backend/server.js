@@ -18,9 +18,11 @@ import {
   fetchStoresInRadius,
   fetchStoreOne,
   fetchAllPages,
+  serviceKeyFingerprint,
 } from "./lib/semasClient.js";
 import { analyzeStores } from "./lib/analysis.js";
 import { listFavorites, createFavorite, deleteFavorite } from "./lib/favorites.js";
+import { hasDb } from "./lib/db.js";
 
 const app = express();
 const PORT = process.env.PORT || 8788;
@@ -35,7 +37,14 @@ const FRONTEND_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "fronte
 app.use(express.static(FRONTEND_DIR));
 
 app.get("/health", (req, res) => {
-  res.json({ ok: true, hasKey: Boolean(process.env.SEMAS_SERVICE_KEY && !process.env.SEMAS_SERVICE_KEY.includes("여기에_발급받은")) });
+  res.json({
+    ok: true,
+    hasKey: Boolean(process.env.SEMAS_SERVICE_KEY && !process.env.SEMAS_SERVICE_KEY.includes("여기에_발급받은")),
+    hasDb: hasDb(),
+    // 키 자체가 아니라 길이+해시 앞 8자리만 — 로컬과 배포 환경에 같은 키가 들어갔는지
+    // 대조하는 용도다. 이 값으로는 키를 역산할 수 없다.
+    key: serviceKeyFingerprint(),
+  });
 });
 
 // 프런트가 필요로 하는 "공개해도 되는" 설정값만 모아 전달.
