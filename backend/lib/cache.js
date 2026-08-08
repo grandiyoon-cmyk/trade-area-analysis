@@ -9,33 +9,42 @@
 
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { hasDb, getSql, ensureSchema } from "./db.js";
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "data", "cache");
+// Vercel 서버리스는 배포 번들(/var/task)이 읽기 전용이라 그 아래에 파일을 쓰면 EROFS/ENOENT가 난다.
+// 쓸 수 있는 곳은 /tmp뿐이고 그마저 인스턴스가 살아있는 동안만 유지되지만, 웜 인스턴스가
+// 연속 요청을 처리하는 동안은 캐시 역할을 해준다. 로컬에서는 지금까지처럼 data/cache/를 쓴다.
+const ROOT = process.env.VERCEL
+  ? join(tmpdir(), "trade-area-cache")
+  : join(dirname(fileURLToPath(import.meta.url)), "..", "data", "cache");
 
 function pathFor(namespace, key) {
-  const dir = join(ROOT, namespace);
-  mkdirSync(dir, { recursive: true });
   const safeKey = String(key).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 150);
-  return join(dir, `${safeKey}.json`);
+  return join(ROOT, namespace, `${safeKey}.json`);
 }
 
 function fileCacheGet(namespace, key, { ttlMs } = {}) {
-  const p = pathFor(namespace, key);
-  if (!existsSync(p)) return null;
   try {
+    const p = pathFor(namespace, key);
+    if (!existsSync(p)) return null;
     const parsed = JSON.parse(readFileSync(p, "utf8"));
     if (ttlMs != null && Date.now() - (parsed.__savedAt ?? 0) > ttlMs) return null;
     return parsed.__value;
   } catch {
-    return null;
+    return null; // 못 읽으면 캐시 미스로 취급하고 원본을 다시 부르면 된다
   }
 }
 
 function fileCacheSet(namespace, key, value) {
-  const p = pathFor(namespace, key);
-  writeFileSync(p, JSON.stringify({ __savedAt: Date.now(), __value: value }), "utf8");
+  try {
+    mkdirSync(join(ROOT, namespace), { recursive: true });
+    writeFileSync(pathFor(namespace, key), JSON.stringify({ __savedAt: Date.now(), __value: value }), "utf8");
+  } catch {
+    // 쓰기 실패(읽기 전용 FS 등)는 무시한다 — 캐시는 최적화일 뿐이라
+    // 저장에 실패했다고 이미 성공한 API 응답을 못 내보내면 안 된다.
+  }
 }
 
 async function dbCacheGet(namespace, key, { ttlMs } = {}) {
@@ -60,12 +69,25 @@ async function dbCacheSet(namespace, key, value) {
   `;
 }
 
+// 캐시 계층 전체의 원칙: **캐시 실패는 절대 요청을 깨뜨리지 않는다.**
+// DB가 잠깐 죽거나 파일시스템이 읽기 전용이어도, 원본 API만 살아있으면 응답은 나가야 한다.
+// (실제로 Vercel 첫 배포에서 읽기 전용 FS 때문에 mkdir이 터져 정상 API 응답까지 502가 났었다)
+
 export async function cacheGet(namespace, key, opts = {}) {
-  return hasDb() ? dbCacheGet(namespace, key, opts) : fileCacheGet(namespace, key, opts);
+  try {
+    return hasDb() ? await dbCacheGet(namespace, key, opts) : fileCacheGet(namespace, key, opts);
+  } catch (err) {
+    console.warn(`[cache] 조회 실패 (${namespace}/${key}) — 캐시 미스로 처리: ${err.message}`);
+    return null;
+  }
 }
 
 export async function cacheSet(namespace, key, value) {
-  return hasDb() ? dbCacheSet(namespace, key, value) : fileCacheSet(namespace, key, value);
+  try {
+    return hasDb() ? await dbCacheSet(namespace, key, value) : fileCacheSet(namespace, key, value);
+  } catch (err) {
+    console.warn(`[cache] 저장 실패 (${namespace}/${key}) — 무시하고 진행: ${err.message}`);
+  }
 }
 
 /** 캐시에 있으면 그대로, 없거나 만료됐으면 fn()을 호출해 저장 후 반환 */
