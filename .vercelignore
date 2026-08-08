@@ -1,0 +1,4 @@
+# 배포 번들에 넣을 필요 없는 것들 — 특히 아래 참고자료 폴더는 30MB짜리 CSV가 들어있어서 제외.
+(251128)소상공인시장진흥공단_상가(상권)정보_OpenApi 활용가이드/
+backend/data/cache/
+backend/scripts/*.out.json

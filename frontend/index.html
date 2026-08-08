@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>우리 동네 상권분석</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div class="app">
+
+  <header class="masthead">
+    <div class="masthead-title">
+      <p class="eyebrow-mark">Trade Area Analysis · SEMAS OpenAPI</p>
+      <h1>우리 동네 상권분석</h1>
+      <p class="masthead-desc">소상공인시장진흥공단 상가(상권)정보로 지역·반경 안 점포 밀도와 업종 분포를 확인하세요.</p>
+    </div>
+    <div class="live-badge" id="liveBadge" aria-live="polite">
+      <b>연결 확인 중…</b>
+      <span>backend 상태</span>
+    </div>
+  </header>
+
+  <div class="mode-tabs" role="tablist" aria-label="분석 방식">
+    <button class="mode-tab is-active" id="tabRegion" role="tab" aria-selected="true">지역으로 찾기</button>
+    <button class="mode-tab" id="tabRadius" role="tab" aria-selected="false">반경으로 찾기</button>
+  </div>
+
+  <div class="favorites-bar" id="favoritesBar" aria-label="즐겨찾기"></div>
+
+  <div class="controls-card">
+
+    <div class="mode-panel" id="panelRegion">
+      <div class="field-row">
+        <label class="field">
+          <span class="field-label">시·도</span>
+          <select id="selSido"><option value="">불러오는 중…</option></select>
+        </label>
+        <label class="field">
+          <span class="field-label">시·군·구</span>
+          <select id="selSigungu" disabled><option value="">시·도 먼저 선택</option></select>
+        </label>
+        <label class="field">
+          <span class="field-label">행정동 <span class="field-optional">(선택)</span></span>
+          <select id="selDong" disabled><option value="">시·군·구 먼저 선택</option></select>
+        </label>
+      </div>
+      <p class="field-hint">행정동을 고르면 그 동만, 비워두면 선택한 시·군·구(또는 시·도) 전체를 표본으로 분석합니다.</p>
+    </div>
+
+    <div class="mode-panel is-hidden" id="panelRadius">
+      <div class="landmark-row" id="landmarkRow"></div>
+      <div class="field-row">
+        <label class="field field-narrow">
+          <span class="field-label">중심점 경도</span>
+          <input id="inLon" type="number" step="0.0001" placeholder="127.0276" />
+        </label>
+        <label class="field field-narrow">
+          <span class="field-label">중심점 위도</span>
+          <input id="inLat" type="number" step="0.0001" placeholder="37.4979" />
+        </label>
+        <label class="field field-wide">
+          <span class="field-label">반경 <b id="radiusVal">500</b>m <span class="field-optional">(최대 2,000m)</span></span>
+          <input id="inRadius" type="range" min="100" max="2000" step="50" value="500" />
+        </label>
+      </div>
+    </div>
+
+    <div class="upjong-row">
+      <label class="field">
+        <span class="field-label">업종 대분류 <span class="field-optional">(선택)</span></span>
+        <select id="selLcls"><option value="">전체 업종</option></select>
+      </label>
+      <label class="field">
+        <span class="field-label">중분류 <span class="field-optional">(선택)</span></span>
+        <select id="selMcls" disabled><option value="">대분류 먼저 선택</option></select>
+      </label>
+      <label class="field">
+        <span class="field-label">소분류 <span class="field-optional">(선택)</span></span>
+        <select id="selScls" disabled><option value="">중분류 먼저 선택</option></select>
+      </label>
+      <button class="save-fav-btn" id="saveFavBtn" type="button" title="현재 조건을 즐겨찾기에 저장">☆ 저장</button>
+      <button class="run-btn" id="runBtn" type="button">분석하기</button>
+    </div>
+
+  </div>
+
+  <main class="results" id="results" aria-live="polite">
+    <div class="landing-hero">
+      <p class="eyebrow-mark">Getting Started</p>
+      <h2 class="landing-title">지역 또는 반경을 고르고 분석하기를 눌러보세요</h2>
+      <p class="landing-desc">왼쪽 위 탭에서 "지역으로 찾기"(시·도 → 시·군·구 → 행정동) 또는 "반경으로 찾기"(즐겨찾는 위치 또는 좌표 직접 입력)를 고른 뒤, 필요하면 업종을 좁히고 분석하기를 누르세요.</p>
+    </div>
+  </main>
+
+  <footer class="disclosure">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/></svg>
+    <div>
+      <b>데이터 안내.</b> 소상공인시장진흥공단 상가(상권)정보 OpenAPI(공공데이터포털, data.go.kr)를 백엔드가 대신 호출해 보여줍니다.
+      데이터는 <b>분기별</b>로 갱신되며 국세청 사업자등록 정보를 기반으로 하기 때문에, 최근 개업·폐업이 반영되기까지 시차가 있을 수 있습니다.
+      반경분석은 API 제한상 <b>최대 2,000m</b>까지만 가능하고, 지역·반경이 너무 넓으면 표본을 최대 5,000건까지만 가져와 집계합니다(그 이상은 "표본 기준" 안내가 뜹니다).
+      위치 분포도는 실제 지도가 아니라 좌표 상대 위치를 보여주는 산점도입니다.
+    </div>
+  </footer>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

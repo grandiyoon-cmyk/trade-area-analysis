@@ -1,0 +1,18 @@
+{
+  "name": "trade-area-analysis-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "소상공인시장진흥공단 상가(상권)정보 OpenAPI를 감싸는 프록시 + 상권분석 서버",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "probe": "node scripts/probe.mjs"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  }
+}
