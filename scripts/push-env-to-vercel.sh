@@ -39,7 +39,7 @@ done
 
 echo
 echo "환경변수 업로드 완료. 이제 재배포합니다 (환경변수는 새 배포에만 적용됨)."
-npx --yes vercel --prod
+npx --yes vercel --prod --yes
 
 echo
 echo "✅ 끝났습니다. 아래 명령으로 확인하세요 — sha8 이 $FP 이면 성공입니다:"

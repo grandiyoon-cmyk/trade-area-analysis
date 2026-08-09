@@ -24,3 +24,5 @@ backend/scripts/*.out.json
 # data.go.kr에서 언제든 다시 받을 수 있어서 저장소에는 넣지 않는다.
 # (같은 폴더의 활용가이드 hwp/업종분류 xlsx는 API 스펙 근거라서 커밋한다)
 *소상공인시장진흥공단_주요상권현황*.csv
+.vercel
+.env*
