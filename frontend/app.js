@@ -93,8 +93,8 @@
     panelRegion.classList.toggle("is-hidden", mode !== "region");
     panelRadius.classList.toggle("is-hidden", mode !== "radius");
   }
-  tabRegion.addEventListener("click", () => setMode("region"));
-  tabRadius.addEventListener("click", () => setMode("radius"));
+  tabRegion.addEventListener("click", () => { setMode("region"); updateScope(); });
+  tabRadius.addEventListener("click", () => { setMode("radius"); updateScope(); });
 
   /* ============================= REGION CASCADE ============================= */
 
@@ -180,9 +180,9 @@
     if (selectEl) selDong.value = cd;
   }
 
-  selSido.addEventListener("change", () => selectSido(selSido.value, { selectEl: false }));
-  selSigungu.addEventListener("change", () => selectSigungu(selSigungu.value, { selectEl: false }));
-  selDong.addEventListener("change", () => selectDong(selDong.value, { selectEl: false }));
+  selSido.addEventListener("change", async () => { await selectSido(selSido.value, { selectEl: false }); updateScope(); });
+  selSigungu.addEventListener("change", async () => { await selectSigungu(selSigungu.value, { selectEl: false }); updateScope(); });
+  selDong.addEventListener("change", () => { selectDong(selDong.value, { selectEl: false }); updateScope(); });
 
   /* ============================= RADIUS MODE ============================= */
 
@@ -212,6 +212,7 @@
         inLat.value = lm.lat;
         [...landmarkRow.children].forEach((c) => c.classList.remove("is-active"));
         chip.classList.add("is-active");
+        updateScope();
       });
       landmarkRow.appendChild(chip);
     });
@@ -219,7 +220,10 @@
 
   inRadius.addEventListener("input", () => {
     radiusVal.textContent = inRadius.value;
+    updateScope();
   });
+  inLon.addEventListener("input", updateScope);
+  inLat.addEventListener("input", updateScope);
 
   /* ============================= UPJONG CASCADE ============================= */
 
@@ -285,9 +289,9 @@
     if (selectEl) selScls.value = cd;
   }
 
-  selLcls.addEventListener("change", () => selectLcls(selLcls.value, { selectEl: false }));
-  selMcls.addEventListener("change", () => selectMcls(selMcls.value, { selectEl: false }));
-  selScls.addEventListener("change", () => selectScls(selScls.value, { selectEl: false }));
+  selLcls.addEventListener("change", async () => { await selectLcls(selLcls.value, { selectEl: false }); updateScope(); });
+  selMcls.addEventListener("change", async () => { await selectMcls(selMcls.value, { selectEl: false }); updateScope(); });
+  selScls.addEventListener("change", () => { selectScls(selScls.value, { selectEl: false }); updateScope(); });
 
   /* ============================= RUN ============================= */
 
@@ -316,44 +320,119 @@
     return `${lm ? lm.name : `${cx}, ${cy}`} 반경 ${inRadius.value}m`;
   }
 
+  /**
+   * 지금 조건으로 분석할 수 있는지, 못 한다면 왜인지.
+   *
+   * 지역 모드는 **시·군·구까지 골라야** 넘어간다. 시·도 전체는 점포가 너무 많아서
+   * (서울 카페만 22,739건, 종로구 전체 업종 21,616건) 앞쪽 표본만 집계되는데, 사용자는
+   * 그걸 결과 화면에 가서야 알게 된다. 애초에 못 돌리게 막는 편이 정직하다.
+   */
+  function scopeStatus() {
+    if (state.mode === "region") {
+      if (!state.selSido) return { ok: false, tone: "info", msg: "시·도를 먼저 고르세요." };
+      if (!state.selSigungu) {
+        return {
+          ok: false, tone: "block",
+          msg: "시·군·구까지 골라야 분석할 수 있어요 — 시·도 전체는 점포가 너무 많아 일부만 집계됩니다.",
+        };
+      }
+      return { ok: true };
+    }
+    const cx = parseFloat(inLon.value), cy = parseFloat(inLat.value);
+    if (!Number.isFinite(cx) || !Number.isFinite(cy)) {
+      return { ok: false, tone: "info", msg: "즐겨찾는 위치를 고르거나 경도·위도를 입력하세요." };
+    }
+    return { ok: true };
+  }
+
   /** 지금 화면 상태를 분석 API 호출/즐겨찾기 저장 양쪽에서 쓸 수 있는 params 객체로.
-   *  location이 안 골라졌으면 null. */
+   *  조건이 덜 갖춰졌으면 null. */
   function currentParams() {
+    if (!scopeStatus().ok) return null;
     const lclsCd = state.selLcls || undefined;
     const mclsCd = state.selMcls || undefined;
     const sclsCd = state.selScls || undefined;
     const upjongLabel = selectedUpjongLabel();
     if (state.mode === "region") {
-      let divId, code;
-      if (state.selDong) { divId = "adongCd"; code = state.selDong; }
-      else if (state.selSigungu) { divId = "signguCd"; code = state.selSigungu; }
-      else if (state.selSido) { divId = "ctprvnCd"; code = state.selSido; }
-      else return null;
+      const divId = state.selDong ? "adongCd" : "signguCd";
+      const code = state.selDong || state.selSigungu;
       return { divId, code, lclsCd, mclsCd, sclsCd, regionLabel: selectedRegionLabel(), upjongLabel };
     }
     const cx = parseFloat(inLon.value), cy = parseFloat(inLat.value);
-    if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
     return { cx, cy, radius: Number(inRadius.value) || 500, lclsCd, mclsCd, sclsCd, radiusLabel: selectedRadiusLabel(), upjongLabel };
   }
 
-  function pathFromParams(mode, p) {
+  /** 분석 결과와 건수 미리보기가 같은 조건 문자열을 쓰도록 한곳에서 만든다. */
+  function pathFromParams(mode, p, endpoint = "region") {
     const parts = [];
     if (p.lclsCd) parts.push("lclsCd=" + encodeURIComponent(p.lclsCd));
     if (p.mclsCd) parts.push("mclsCd=" + encodeURIComponent(p.mclsCd));
     if (p.sclsCd) parts.push("sclsCd=" + encodeURIComponent(p.sclsCd));
-    if (mode === "region") return `/api/trade-area/region?divId=${p.divId}&code=${encodeURIComponent(p.code)}&${parts.join("&")}`;
-    return `/api/trade-area/radius?cx=${p.cx}&cy=${p.cy}&radius=${p.radius}&${parts.join("&")}`;
+    const base = endpoint === "count" ? "/api/trade-area/count" : `/api/trade-area/${mode}`;
+    const scope = mode === "region"
+      ? `divId=${p.divId}&code=${encodeURIComponent(p.code)}`
+      : `cx=${p.cx}&cy=${p.cy}&radius=${p.radius}`;
+    return `${base}?${scope}${parts.length ? "&" + parts.join("&") : ""}`;
+  }
+
+  /* ── 범위 안내: 돌리기 전에 몇 건인지 알려준다 ─────────────────────────────
+     상권분석은 조건이 넓으면 앞쪽 표본만 집계하는데, 예전엔 그 사실을 결과 화면에
+     가서야 알 수 있었다. 조건이 바뀔 때마다 건수만 가볍게(1건짜리 페이지 1회) 물어
+     미리 알려준다. 서버가 7일 캐시를 하므로 같은 조건을 반복해도 실API를 다시 부르지 않는다. */
+
+  const scopeNotice = document.getElementById("scopeNotice");
+  let scopeSeq = 0;
+  let scopeTimer = null;
+
+  function setNotice(text, tone) {
+    scopeNotice.textContent = text || "";
+    scopeNotice.className = "scope-notice" + (tone ? " is-" + tone : "");
+  }
+
+  function updateScope() {
+    const status = scopeStatus();
+    runBtn.disabled = !status.ok;
+    saveFavBtn.disabled = !status.ok;
+
+    if (!status.ok) {
+      setNotice(status.msg, status.tone);
+      return;
+    }
+    setNotice("", null);
+
+    const seq = ++scopeSeq;
+    const params = currentParams();
+    clearTimeout(scopeTimer);
+    scopeTimer = setTimeout(async () => {
+      try {
+        const r = await api(pathFromParams(state.mode, params, "count"));
+        if (seq !== scopeSeq) return; // 그 사이 조건이 또 바뀌었으면 버린다
+        if (r.totalCount == null) return;
+        if (r.totalCount === 0) {
+          setNotice("이 조건에 해당하는 점포가 없어요. 업종이나 지역을 바꿔보세요.", "warn");
+        } else if (r.totalCount > r.sampleCap) {
+          setNotice(
+            `이 조건은 약 ${num(r.totalCount)}건이라 앞 ${num(r.sampleCap)}건만 집계됩니다. ` +
+            `업종을 좁히거나 행정동을 고르면 전량으로 볼 수 있어요.`,
+            "warn"
+          );
+        } else {
+          setNotice(`이 조건은 약 ${num(r.totalCount)}건 — 전량 집계됩니다.`, "ok");
+        }
+      } catch {
+        if (seq === scopeSeq) setNotice("", null); // 건수를 못 받아와도 분석 자체는 막지 않는다
+      }
+    }, 350);
   }
 
   async function runAnalysis() {
     const params = currentParams();
     if (!params) {
-      resultsEl.innerHTML = state.mode === "region"
-        ? `<div class="error-banner"><b>지역을 선택하세요</b>최소한 시·도는 선택해야 분석할 수 있습니다.</div>`
-        : `<div class="error-banner"><b>중심점을 입력하세요</b>즐겨찾는 위치를 고르거나 경도·위도를 직접 입력하세요.</div>`;
+      const status = scopeStatus();
+      resultsEl.innerHTML = `<div class="error-banner"><b>조건이 덜 갖춰졌어요</b>${escapeText(status.msg || "")}</div>`;
       return;
     }
-    resultsEl.innerHTML = `<div class="loading-inline"><span class="spinner"></span> 상권 데이터를 모아 집계하는 중… (지역이 넓으면 몇 초 걸릴 수 있어요)</div>`;
+    resultsEl.innerHTML = `<div class="loading-inline"><span class="spinner"></span> 점포를 모아 세는 중… (범위가 넓으면 몇 초 걸려요)</div>`;
     runBtn.disabled = true;
     try {
       const data = await api(pathFromParams(state.mode, params));
@@ -362,6 +441,7 @@
       resultsEl.innerHTML = `<div class="error-banner"><b>분석 실패</b>${escapeText(err.message)}</div>`;
     } finally {
       runBtn.disabled = false;
+      updateScope();
     }
   }
 
@@ -1043,6 +1123,7 @@
     }
   }
 
+  updateScope();   // 첫 화면에서도 "시·도를 먼저 고르세요"가 보이고 버튼이 잠긴다
   checkHealth();
   loadConfig();
   loadSido();

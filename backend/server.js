@@ -166,6 +166,12 @@ function upjongFilter(query) {
 // 백 번쯤 돌리는 것만으로 하루치가 소진돼 앱 전체가 멈춘다.
 const TRADE_AREA_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+// 한 번 분석할 때 실API를 몇 페이지까지 도는지. 1페이지 = 1,000건이므로 기본 5,000건이
+// 표본 상한이다. /api/trade-area/count가 이 값을 화면에 알려줘서, 조건이 이보다 넓으면
+// "일부만 집계된다"고 미리 경고할 수 있다.
+const DEFAULT_MAX_PAGES = 5;
+const MAX_MAX_PAGES = 10;
+
 // analyzeStores()가 내보내는 필드 구성이 바뀌면 이 숫자를 올린다.
 // 안 올리면 형식을 바꿔도 **최대 7일 동안 옛 형식이 그대로 나간다** — 실제로 top3SmallShare를
 // 추가했을 때 캐시에 있던 구버전 응답이 나와서 프런트가 값을 못 찾는 일이 있었다.
@@ -182,10 +188,52 @@ function wantsFresh(query) {
   return query.refresh === "1" || query.refresh === "true";
 }
 
+/**
+ * 조건에 해당하는 점포가 몇 건인지만 미리 알려준다 (집계 없이).
+ *
+ * 상권분석은 조건이 넓으면 앞쪽 표본만 가져와 집계하는데, 사용자는 그걸 결과 화면에
+ * 가서야 안다. 1건짜리 페이지를 한 번만 불러 totalCount를 읽어오면, 분석을 돌리기 전에
+ * "이 조건은 22,739건이라 일부만 집계됩니다"라고 미리 알려줄 수 있다.
+ * 실API 호출 1회 + 7일 캐시라 화면에서 조건을 바꿀 때마다 불러도 부담이 없다.
+ */
+app.get("/api/trade-area/count", async (req, res) => {
+  const { divId, code } = req.query;
+  const filter = upjongFilter(req.query);
+  const isRegion = ["ctprvnCd", "signguCd", "adongCd"].includes(divId) && code;
+  const cx = Number(req.query.cx), cy = Number(req.query.cy);
+  const radius = Number(req.query.radius) || 500;
+  const isRadius = Number.isFinite(cx) && Number.isFinite(cy);
+
+  if (!isRegion && !isRadius) {
+    return res.status(400).json({ error: "divId+code 또는 cx+cy가 필요합니다." });
+  }
+  try {
+    const key = tradeAreaCacheKey(
+      isRegion
+        ? ["region", divId, code, filter.indsLclsCd, filter.indsMclsCd, filter.indsSclsCd]
+        : ["radius", cx, cy, radius, filter.indsLclsCd, filter.indsMclsCd, filter.indsSclsCd]
+    );
+    const result = await cached(
+      "trade-area-count",
+      key,
+      async () => {
+        const page = isRegion
+          ? await fetchStoresInRegion({ divId, key: code, ...filter, pageNo: 1, numOfRows: 1 })
+          : await fetchStoresInRadius({ cx, cy, radius, ...filter, pageNo: 1, numOfRows: 1 });
+        return { totalCount: page.totalCount };
+      },
+      { ttlMs: TRADE_AREA_TTL_MS }
+    );
+    res.json({ totalCount: result.totalCount, sampleCap: DEFAULT_MAX_PAGES * 1000 });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
 /** 시도(ctprvnCd) / 시군구(signguCd) / 행정동(adongCd) 단위 상권분석 */
 app.get("/api/trade-area/region", async (req, res) => {
   const { divId, code } = req.query;
-  const maxPages = Math.min(parseInt(req.query.maxPages, 10) || 5, 10);
+  const maxPages = Math.min(parseInt(req.query.maxPages, 10) || DEFAULT_MAX_PAGES, MAX_MAX_PAGES);
   if (!["ctprvnCd", "signguCd", "adongCd"].includes(divId) || !code) {
     return res.status(400).json({ error: "divId(ctprvnCd|signguCd|adongCd)와 code가 필요합니다." });
   }
@@ -212,7 +260,7 @@ app.get("/api/trade-area/radius", async (req, res) => {
   const cx = Number(req.query.cx);
   const cy = Number(req.query.cy);
   const radius = Number(req.query.radius) || 500;
-  const maxPages = Math.min(parseInt(req.query.maxPages, 10) || 5, 10);
+  const maxPages = Math.min(parseInt(req.query.maxPages, 10) || DEFAULT_MAX_PAGES, MAX_MAX_PAGES);
   if (!Number.isFinite(cx) || !Number.isFinite(cy)) {
     return res.status(400).json({ error: "cx(경도), cy(위도) 쿼리 파라미터가 필요합니다." });
   }

@@ -282,6 +282,23 @@ input[type="range"] { width: 100%; accent-color: var(--ink); margin-top: 8px; }
 }
 .save-fav-btn:hover { border-color: var(--ink); color: var(--ink); }
 
+/* 범위 안내 — 분석을 돌리기 전에 "몇 건인지"를 알려주는 자리 */
+.scope-notice {
+  font-size: 12.5px;
+  line-height: 1.5;
+  margin: 14px 0 0;
+  padding-left: 13px;
+  border-left: 3px solid transparent;
+  color: var(--ink-3);
+  min-height: 1px;
+}
+.scope-notice.is-block { color: var(--ink-2); border-left-color: var(--ink-2); font-weight: 600; }
+.scope-notice.is-warn  { color: var(--ink-2); border-left-color: var(--status-warning); }
+.scope-notice.is-ok    { color: var(--ink-3); border-left-color: var(--status-good); }
+
+/* 조건이 덜 갖춰지면 주 동작을 잠근다 */
+.run-btn:disabled, .save-fav-btn:disabled { opacity: .38; cursor: not-allowed; }
+
 /* ============================= 즐겨찾기 ============================= */
 .favorites-bar {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
