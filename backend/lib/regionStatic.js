@@ -1,15 +1,20 @@
-// 시도/시군구 코드는 자주 바뀌지 않아(2025-01 기준) 소상공인시장진흥공단 공식
-// OpenAPI 활용가이드(2025.6, 참조. 행정구역 코드)에 실린 표를 그대로 옮겨 정적 데이터로 둔다.
-// 덕분에 지역 선택 UI의 1~2단계(시도→시군구)는 API 호출 없이 즉시 뜬다.
-// 행정동(3단계)은 개수가 너무 많고 개편도 있어 정적으로 두지 않고, 그때그때
-// baroApi(행정구역 조회)로 실시간 조회해서 디스크 캐시한다 (semasClient.js 참고).
+// 시도/시군구는 자주 안 바뀌어서 정적으로 들고 있는다 — 매번 API를 부를 이유가 없다.
 //
-// 출처: 소상공인시장진흥공단_상가(상권)정보_OpenApi 활용가이드.hwp, "참조. 행정구역 코드" (2025-01-01 기준)
+// ⚠️ 2026-08-09 갱신: 광주광역시(29)와 전라남도(46)가 **전남광주통합특별시(12)**로 통합됐다.
+// 옛 코드 29·46으로 조회하면 API가 NODATA_ERROR를 돌려주므로(행정동 목록조차 안 나옴),
+// 화면에서 고를 수는 있는데 결과가 0건인 상태였다. 시군구 27개(광주 5개 구 + 전남 22개 시·군)는
+// 실제 데이터에서 뽑아 각 시군구 건수 합이 시도 총계(175,276건)와 정확히 일치하는 것으로 검증했다.
+//
+// 이 목록이 또 틀어지면 같은 증상이 난다 — 특정 지역만 "점포가 없어요"로 나온다면 여기를 의심할 것.
 
 export const SIDO_LIST = [
   {
     "cd": "11",
     "nm": "서울특별시"
+  },
+  {
+    "cd": "12",
+    "nm": "전남광주통합특별시"
   },
   {
     "cd": "26",
@@ -22,10 +27,6 @@ export const SIDO_LIST = [
   {
     "cd": "28",
     "nm": "인천광역시"
-  },
-  {
-    "cd": "29",
-    "nm": "광주광역시"
   },
   {
     "cd": "30",
@@ -50,10 +51,6 @@ export const SIDO_LIST = [
   {
     "cd": "44",
     "nm": "충청남도"
-  },
-  {
-    "cd": "46",
-    "nm": "전라남도"
   },
   {
     "cd": "47",
@@ -227,6 +224,168 @@ export const SIGUNGU_LIST = [
     "ctprvnNm": "서울특별시",
     "signguCd": "11740",
     "signguNm": "강동구"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12110",
+    "signguNm": "목포시"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12130",
+    "signguNm": "여수시"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12150",
+    "signguNm": "순천시"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12170",
+    "signguNm": "나주시"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12190",
+    "signguNm": "광양시"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12210",
+    "signguNm": "동구"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12240",
+    "signguNm": "서구"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12270",
+    "signguNm": "남구"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12300",
+    "signguNm": "북구"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12330",
+    "signguNm": "광산구"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12710",
+    "signguNm": "담양군"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12720",
+    "signguNm": "곡성군"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12730",
+    "signguNm": "구례군"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12740",
+    "signguNm": "고흥군"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12750",
+    "signguNm": "보성군"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12760",
+    "signguNm": "화순군"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12770",
+    "signguNm": "장흥군"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12780",
+    "signguNm": "강진군"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12790",
+    "signguNm": "해남군"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12800",
+    "signguNm": "영암군"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12810",
+    "signguNm": "무안군"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12820",
+    "signguNm": "함평군"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12830",
+    "signguNm": "영광군"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12840",
+    "signguNm": "장성군"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12850",
+    "signguNm": "완도군"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12860",
+    "signguNm": "진도군"
+  },
+  {
+    "ctprvnCd": "12",
+    "ctprvnNm": "전남광주통합특별시",
+    "signguCd": "12870",
+    "signguNm": "신안군"
   },
   {
     "ctprvnCd": "26",
@@ -437,36 +596,6 @@ export const SIGUNGU_LIST = [
     "ctprvnNm": "인천광역시",
     "signguCd": "28720",
     "signguNm": "옹진군"
-  },
-  {
-    "ctprvnCd": "29",
-    "ctprvnNm": "광주광역시",
-    "signguCd": "29110",
-    "signguNm": "동구"
-  },
-  {
-    "ctprvnCd": "29",
-    "ctprvnNm": "광주광역시",
-    "signguCd": "29140",
-    "signguNm": "서구"
-  },
-  {
-    "ctprvnCd": "29",
-    "ctprvnNm": "광주광역시",
-    "signguCd": "29155",
-    "signguNm": "남구"
-  },
-  {
-    "ctprvnCd": "29",
-    "ctprvnNm": "광주광역시",
-    "signguCd": "29170",
-    "signguNm": "북구"
-  },
-  {
-    "ctprvnCd": "29",
-    "ctprvnNm": "광주광역시",
-    "signguCd": "29200",
-    "signguNm": "광산구"
   },
   {
     "ctprvnCd": "30",
@@ -977,138 +1106,6 @@ export const SIGUNGU_LIST = [
     "ctprvnNm": "충청남도",
     "signguCd": "44825",
     "signguNm": "태안군"
-  },
-  {
-    "ctprvnCd": "46",
-    "ctprvnNm": "전라남도",
-    "signguCd": "46110",
-    "signguNm": "목포시"
-  },
-  {
-    "ctprvnCd": "46",
-    "ctprvnNm": "전라남도",
-    "signguCd": "46130",
-    "signguNm": "여수시"
-  },
-  {
-    "ctprvnCd": "46",
-    "ctprvnNm": "전라남도",
-    "signguCd": "46150",
-    "signguNm": "순천시"
-  },
-  {
-    "ctprvnCd": "46",
-    "ctprvnNm": "전라남도",
-    "signguCd": "46170",
-    "signguNm": "나주시"
-  },
-  {
-    "ctprvnCd": "46",
-    "ctprvnNm": "전라남도",
-    "signguCd": "46230",
-    "signguNm": "광양시"
-  },
-  {
-    "ctprvnCd": "46",
-    "ctprvnNm": "전라남도",
-    "signguCd": "46710",
-    "signguNm": "담양군"
-  },
-  {
-    "ctprvnCd": "46",
-    "ctprvnNm": "전라남도",
-    "signguCd": "46720",
-    "signguNm": "곡성군"
-  },
-  {
-    "ctprvnCd": "46",
-    "ctprvnNm": "전라남도",
-    "signguCd": "46730",
-    "signguNm": "구례군"
-  },
-  {
-    "ctprvnCd": "46",
-    "ctprvnNm": "전라남도",
-    "signguCd": "46770",
-    "signguNm": "고흥군"
-  },
-  {
-    "ctprvnCd": "46",
-    "ctprvnNm": "전라남도",
-    "signguCd": "46780",
-    "signguNm": "보성군"
-  },
-  {
-    "ctprvnCd": "46",
-    "ctprvnNm": "전라남도",
-    "signguCd": "46790",
-    "signguNm": "화순군"
-  },
-  {
-    "ctprvnCd": "46",
-    "ctprvnNm": "전라남도",
-    "signguCd": "46800",
-    "signguNm": "장흥군"
-  },
-  {
-    "ctprvnCd": "46",
-    "ctprvnNm": "전라남도",
-    "signguCd": "46810",
-    "signguNm": "강진군"
-  },
-  {
-    "ctprvnCd": "46",
-    "ctprvnNm": "전라남도",
-    "signguCd": "46820",
-    "signguNm": "해남군"
-  },
-  {
-    "ctprvnCd": "46",
-    "ctprvnNm": "전라남도",
-    "signguCd": "46830",
-    "signguNm": "영암군"
-  },
-  {
-    "ctprvnCd": "46",
-    "ctprvnNm": "전라남도",
-    "signguCd": "46840",
-    "signguNm": "무안군"
-  },
-  {
-    "ctprvnCd": "46",
-    "ctprvnNm": "전라남도",
-    "signguCd": "46860",
-    "signguNm": "함평군"
-  },
-  {
-    "ctprvnCd": "46",
-    "ctprvnNm": "전라남도",
-    "signguCd": "46870",
-    "signguNm": "영광군"
-  },
-  {
-    "ctprvnCd": "46",
-    "ctprvnNm": "전라남도",
-    "signguCd": "46880",
-    "signguNm": "장성군"
-  },
-  {
-    "ctprvnCd": "46",
-    "ctprvnNm": "전라남도",
-    "signguCd": "46890",
-    "signguNm": "완도군"
-  },
-  {
-    "ctprvnCd": "46",
-    "ctprvnNm": "전라남도",
-    "signguCd": "46900",
-    "signguNm": "진도군"
-  },
-  {
-    "ctprvnCd": "46",
-    "ctprvnNm": "전라남도",
-    "signguCd": "46910",
-    "signguNm": "신안군"
   },
   {
     "ctprvnCd": "47",
