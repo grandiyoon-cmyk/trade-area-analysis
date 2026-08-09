@@ -567,9 +567,15 @@
     }
     const { colorVarFor } = topCategoryColorer(byLarge);
 
-    const lons = points.map((p) => p.lon), lats = points.map((p) => p.lat);
-    let minLon = Math.min(...lons), maxLon = Math.max(...lons);
-    let minLat = Math.min(...lats), maxLat = Math.max(...lats);
+    // reduce로 구한다 — Math.min(...arr)은 표본이 1만 건이면 인자 개수 한계에 닿는다.
+    const ex = points.reduce(
+      (a, p) => ({
+        minLon: Math.min(a.minLon, p.lon), maxLon: Math.max(a.maxLon, p.lon),
+        minLat: Math.min(a.minLat, p.lat), maxLat: Math.max(a.maxLat, p.lat),
+      }),
+      { minLon: Infinity, maxLon: -Infinity, minLat: Infinity, maxLat: -Infinity }
+    );
+    let { minLon, maxLon, minLat, maxLat } = ex;
     const padLon = (maxLon - minLon) * 0.08 || 0.001;
     const padLat = (maxLat - minLat) * 0.08 || 0.001;
     minLon -= padLon; maxLon += padLon; minLat -= padLat; maxLat += padLat;
@@ -612,6 +618,17 @@
 
   /* ============================= NAVER MAP ============================= */
 
+  // 네이버 지도는 **키가 틀려도 스크립트 자체는 HTTP 200으로 정상 로드된다**(333KB짜리 실제
+  // 라이브러리가 그대로 내려온다). 그래서 script.onerror는 절대 안 터지고, 인증 실패는 지도를
+  // 만든 뒤에야 "네이버 지도 Open API 인증이 실패했습니다" 타일로 드러난다. 그 상태를 감지하는
+  // 공식 수단이 이 전역 콜백이다. 이걸 안 달아두면 키가 틀렸을 때 위치 분포가 통째로 사라진다.
+  let naverAuthFailed = false;
+  let onNaverAuthFailure = null;
+  window.navermap_authFailure = function () {
+    naverAuthFailed = true;
+    if (onNaverAuthFailure) onNaverAuthFailure();
+  };
+
   let naverMapsScriptPromise = null;
   function loadNaverMapsScript(clientId) {
     if (window.naver?.maps) return Promise.resolve();
@@ -627,33 +644,148 @@
     return naverMapsScriptPromise;
   }
 
-  const MAX_MAP_MARKERS = 1000;
   let naverInfoWindow = null;
 
-  /** 실제 네이버 지도 위에 마커. NAVER_MAPS_CLIENT_ID가 없으면 안내만 띄우고 조용히 넘어간다
-   *  (좌표 산점도는 항상 뜨니 지도가 없어도 기능이 막히지는 않는다). */
-  async function renderNaverMap(container, points, byLarge) {
-    container.innerHTML = "";
-    if (!state.naverMapsClientId) {
-      container.innerHTML = `<div class="empty-state">네이버 지도 API 키가 없어 실제 지도는 생략합니다 — backend/.env에 NAVER_MAPS_CLIENT_ID를 넣으면 여기에 지도가 뜹니다. 아래 좌표 상대 위치는 키 없이도 항상 볼 수 있어요.</div>`;
-      return;
+  const MARKER_R = 4;        // 점 반지름(px)
+  const CLICK_SLOP = 8;      // 클릭 지점에서 이 픽셀 안에 있는 점을 집는다
+
+  /**
+   * 표본 전체를 지도 위에 그리는 캔버스 오버레이.
+   *
+   * naver.maps.Marker를 점포마다 만들면 마커 하나가 DOM 엘리먼트 하나라서, 수천 개를
+   * 넘어가면 패닝·줌이 눈에 띄게 버벅인다(그래서 예전엔 1,000개만 샘플링해 보여줬다).
+   * 캔버스에 직접 찍으면 엘리먼트는 <canvas> 하나뿐이라 1만 개도 부드럽게 그려져서,
+   * "표본 전체의 분포"를 있는 그대로 지도 위에 얹을 수 있다.
+   *
+   * 클릭은 캔버스가 pointer-events:none 이라 지도로 그대로 통과하고, 지도의 click
+   * 이벤트에서 좌표를 픽셀로 바꿔 가장 가까운 점을 찾는 방식으로 처리한다.
+   */
+  function createPointsOverlay(points, colorHexFor, surfaceHex) {
+    function PointsOverlay() {
+      const cv = document.createElement("canvas");
+      cv.style.position = "absolute";
+      cv.style.pointerEvents = "none"; // 클릭은 지도가 받게 둔다
+      this._canvas = cv;
     }
+    PointsOverlay.prototype = new naver.maps.OverlayView();
+    PointsOverlay.prototype.constructor = PointsOverlay;
+
+    PointsOverlay.prototype.onAdd = function () {
+      this.getPanes().overlayLayer.appendChild(this._canvas);
+    };
+    PointsOverlay.prototype.onRemove = function () {
+      this._canvas.remove();
+    };
+    PointsOverlay.prototype.draw = function () {
+      const map = this.getMap();
+      if (!map) return;
+      const proj = this.getProjection();
+      const size = map.getSize();
+      const bounds = map.getBounds();
+
+      // 오버레이 레이어는 지도와 함께 움직이는 자체 좌표계를 쓴다. 화면 좌상단(북서)의
+      // 오버레이 좌표를 원점으로 잡고, 캔버스를 딱 그 자리에 올려 화면 크기만큼만 그린다.
+      const nw = new naver.maps.LatLng(bounds.getMax().y, bounds.getMin().x);
+      const origin = proj.fromCoordToOffset(nw);
+
+      const dpr = window.devicePixelRatio || 1;
+      const cv = this._canvas;
+      cv.width = Math.round(size.width * dpr);
+      cv.height = Math.round(size.height * dpr);
+      cv.style.width = size.width + "px";
+      cv.style.height = size.height + "px";
+      cv.style.left = origin.x + "px";
+      cv.style.top = origin.y + "px";
+
+      const ctx = cv.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, size.width, size.height);
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = surfaceHex;
+
+      const pad = MARKER_R + 2;
+      for (const p of points) {
+        const pt = proj.fromCoordToOffset(new naver.maps.LatLng(p.lat, p.lon));
+        const x = pt.x - origin.x, y = pt.y - origin.y;
+        if (x < -pad || y < -pad || x > size.width + pad || y > size.height + pad) continue; // 화면 밖은 건너뛴다
+        ctx.beginPath();
+        ctx.arc(x, y, MARKER_R, 0, Math.PI * 2);
+        ctx.fillStyle = colorHexFor(p.largeCd);
+        ctx.fill();
+        ctx.stroke();
+      }
+    };
+    return new PointsOverlay();
+  }
+
+  /** 클릭 지점에서 CLICK_SLOP 픽셀 안에 있는 점포 중 가장 가까운 것 */
+  function findPointNear(map, proj, points, coord) {
+    const target = proj.fromCoordToOffset(coord);
+    let best = null, bestD2 = (CLICK_SLOP + MARKER_R) ** 2;
+    for (const p of points) {
+      const pt = proj.fromCoordToOffset(new naver.maps.LatLng(p.lat, p.lon));
+      const d2 = (pt.x - target.x) ** 2 + (pt.y - target.y) ** 2;
+      if (d2 <= bestD2) { bestD2 = d2; best = p; }
+    }
+    return best;
+  }
+
+  /**
+   * 위치 분포를 실제 네이버 지도 위에 그린다.
+   * 키(NAVER_MAPS_CLIENT_ID)가 없거나 지도 로드에 실패하면 좌표 산점도로 폴백한다 —
+   * 지도가 없다고 위치 분포 자체를 못 보는 일은 없어야 한다.
+   */
+  async function renderDistribution(container, points, byLarge) {
+    container.innerHTML = "";
     if (!points.length) {
       container.innerHTML = `<div class="empty-state">좌표 정보가 있는 점포가 없습니다.</div>`;
       return;
     }
-    container.innerHTML = `<div class="loading-inline"><span class="spinner"></span> 지도 불러오는 중…</div>`;
 
+    const fallback = (msg) => {
+      container.innerHTML = "";
+      if (msg) {
+        const note = document.createElement("p");
+        note.className = "kpi-sub";
+        note.style.marginBottom = "10px";
+        note.textContent = msg;
+        container.appendChild(note);
+      }
+      const box = document.createElement("div");
+      container.appendChild(box);
+      renderScatter(box, points, byLarge);
+    };
+
+    const AUTH_FAIL_MSG =
+      "네이버 지도 인증에 실패해 좌표 상대 위치로 표시합니다 — NCP 콘솔에서 Client ID와 '웹 서비스 URL' 등록을 확인하세요.";
+
+    if (!state.naverMapsClientId) {
+      fallback("네이버 지도 키(NAVER_MAPS_CLIENT_ID)가 없어 좌표 상대 위치로 표시합니다 — 키를 넣으면 이 자리에 실제 지도가 뜹니다.");
+      return;
+    }
+    // 한 번 인증에 실패했으면 같은 키로 다시 시도해봐야 결과가 같다. 바로 폴백한다.
+    if (naverAuthFailed) {
+      fallback(AUTH_FAIL_MSG);
+      return;
+    }
+
+    container.innerHTML = `<div class="loading-inline"><span class="spinner"></span> 지도 불러오는 중…</div>`;
     try {
       await loadNaverMapsScript(state.naverMapsClientId);
     } catch (err) {
-      container.innerHTML = `<div class="empty-state">${escapeText(err.message)}</div>`;
+      fallback(err.message);
       return;
     }
     if (!window.naver?.maps) {
-      container.innerHTML = `<div class="empty-state">네이버 지도를 불러오지 못했습니다. Client ID와 콘솔에 등록된 서비스 URL을 확인하세요.</div>`;
+      fallback("네이버 지도를 불러오지 못했습니다. Client ID와 NCP 콘솔에 등록한 서비스 URL을 확인하세요.");
       return;
     }
+
+    // 인증 실패는 지도를 만든 **뒤에** 비동기로 통보된다. 그때 이 카드를 산점도로 갈아끼운다.
+    // (이미 다른 분석 결과로 화면이 바뀐 뒤라면 건드리지 않는다)
+    onNaverAuthFailure = () => {
+      if (container.isConnected) fallback(AUTH_FAIL_MSG);
+    };
 
     container.innerHTML = "";
     const mapEl = document.createElement("div");
@@ -661,48 +793,48 @@
     container.appendChild(mapEl);
 
     const { colorVarFor } = topCategoryColorer(byLarge);
-    const step = Math.max(1, Math.ceil(points.length / MAX_MAP_MARKERS));
-    const sample = points.filter((_, i) => i % step === 0);
+    const colorHexFor = (code) => cssVar(colorVarFor(code));
+    const surfaceHex = cssVar("--surface-1");
 
-    const lats = points.map((p) => p.lat), lons = points.map((p) => p.lon);
+    // reduce로 최소/최대를 구한다 — Math.min(...arr)은 표본이 1만 건이면 인자 개수 한계에 닿는다.
+    const b = points.reduce(
+      (a, p) => ({
+        minLat: Math.min(a.minLat, p.lat), maxLat: Math.max(a.maxLat, p.lat),
+        minLon: Math.min(a.minLon, p.lon), maxLon: Math.max(a.maxLon, p.lon),
+      }),
+      { minLat: Infinity, maxLat: -Infinity, minLon: Infinity, maxLon: -Infinity }
+    );
     const bounds = new naver.maps.LatLngBounds(
-      new naver.maps.LatLng(Math.min(...lats), Math.min(...lons)),
-      new naver.maps.LatLng(Math.max(...lats), Math.max(...lons))
+      new naver.maps.LatLng(b.minLat, b.minLon),
+      new naver.maps.LatLng(b.maxLat, b.maxLon)
     );
 
     const map = new naver.maps.Map(mapEl, { center: bounds.getCenter(), zoom: 15 });
-    if (!naverInfoWindow) naverInfoWindow = new naver.maps.InfoWindow({ content: " " });
+    map.fitBounds(bounds);
 
-    sample.forEach((p) => {
-      const colorHex = cssVar(colorVarFor(p.largeCd));
-      const marker = new naver.maps.Marker({
-        position: new naver.maps.LatLng(p.lat, p.lon),
-        map,
-        icon: {
-          content: `<span style="display:block;width:10px;height:10px;border-radius:50%;background:${colorHex};border:1.5px solid ${cssVar("--surface-1")};box-shadow:0 0 0 1px rgba(0,0,0,.18)"></span>`,
-          anchor: new naver.maps.Point(5, 5),
-        },
-      });
-      naver.maps.Event.addListener(marker, "click", () => {
-        naverInfoWindow.setContent(
-          `<div style="padding:8px 10px;font-size:12.5px;line-height:1.5;max-width:220px">` +
-          `<b>${escapeText(p.name)}</b><br/>${escapeText(p.large ?? "")}${p.middle ? " · " + escapeText(p.middle) : ""}<br/>` +
-          `<span style="color:#777">${escapeText(p.addr ?? "—")}</span></div>`
-        );
-        naverInfoWindow.open(map, marker);
-      });
+    const overlay = createPointsOverlay(points, colorHexFor, surfaceHex);
+    overlay.setMap(map);
+
+    if (!naverInfoWindow) naverInfoWindow = new naver.maps.InfoWindow({ content: " " });
+    naver.maps.Event.addListener(map, "click", (e) => {
+      const proj = overlay.getProjection();
+      if (!proj) return;
+      const hit = findPointNear(map, proj, points, e.coord);
+      if (!hit) return naverInfoWindow.close();
+      naverInfoWindow.setContent(
+        `<div style="padding:8px 10px;font-size:12.5px;line-height:1.5;max-width:220px">` +
+        `<b>${escapeText(hit.name)}</b><br/>${escapeText(hit.large ?? "")}${hit.middle ? " · " + escapeText(hit.middle) : ""}<br/>` +
+        `<span style="color:#777">${escapeText(hit.addr ?? "—")}</span></div>`
+      );
+      naverInfoWindow.open(map, new naver.maps.LatLng(hit.lat, hit.lon));
     });
 
-    map.fitBounds(bounds);
     categoryLegend(container, byLarge);
-
-    if (points.length > sample.length) {
-      const note = document.createElement("p");
-      note.className = "kpi-sub";
-      note.style.marginTop = "8px";
-      note.textContent = `지도 마커는 최대 ${num(MAX_MAP_MARKERS)}개까지만 표시합니다(전체 ${num(points.length)}개 중 샘플). 전체 표본은 아래 좌표 상대 위치와 점포 목록에서 볼 수 있어요.`;
-      container.appendChild(note);
-    }
+    const hint = document.createElement("p");
+    hint.className = "kpi-sub";
+    hint.style.marginTop = "8px";
+    hint.textContent = `표본 ${num(points.length)}개를 모두 표시합니다. 점을 클릭하면 상호명·주소가 나옵니다.`;
+    container.appendChild(hint);
   }
 
   function renderStoreTable(container, points) {
@@ -798,23 +930,17 @@
     rankedBarList(middleBody, data.byMiddle);
     resultsEl.appendChild(middleCard);
 
-    const mapCard = document.createElement("div");
-    mapCard.className = "result-card";
-    mapCard.innerHTML = `<div class="result-card-head"><h3>지도에서 보기</h3><span class="kpi-sub">네이버 지도 · 클릭하면 상호명/주소</span></div>`;
-    const mapBody = document.createElement("div");
-    mapBody.className = "scatter-wrap";
-    mapCard.appendChild(mapBody);
-    resultsEl.appendChild(mapCard);
-    renderNaverMap(mapBody, data.points, data.byLarge); // 비동기 — 로드되는 대로 mapBody 안을 채움
-
-    const scatterCard = document.createElement("div");
-    scatterCard.className = "result-card";
-    scatterCard.innerHTML = `<div class="result-card-head"><h3>위치 분포 (전체 표본)</h3><span class="kpi-sub">지도가 아닌 좌표 상대 위치 · 위=북쪽</span></div>`;
-    const scatterBody = document.createElement("div");
-    scatterBody.className = "scatter-wrap";
-    scatterCard.appendChild(scatterBody);
-    renderScatter(scatterBody, data.points, data.byLarge);
-    resultsEl.appendChild(scatterCard);
+    // 지도와 좌표 산점도를 따로 두지 않고 한 카드로 합쳤다 — 둘 다 "표본이 어디에 몰려
+    // 있는가"라는 같은 질문에 답하는데, 지도가 뜨는 환경에서는 산점도가 열등한 중복이고,
+    // 키가 없는 환경에서는 산점도가 그 자리를 대신하면 된다.
+    const distCard = document.createElement("div");
+    distCard.className = "result-card";
+    distCard.innerHTML = `<div class="result-card-head"><h3>위치 분포 (전체 표본)</h3><span class="kpi-sub">네이버 지도 · 점을 클릭하면 상호명/주소</span></div>`;
+    const distBody = document.createElement("div");
+    distBody.className = "scatter-wrap";
+    distCard.appendChild(distBody);
+    resultsEl.appendChild(distCard);
+    renderDistribution(distBody, data.points, data.byLarge); // 비동기 — 지도가 로드되는 대로 채움
 
     const tableCard = document.createElement("div");
     tableCard.className = "result-card";
