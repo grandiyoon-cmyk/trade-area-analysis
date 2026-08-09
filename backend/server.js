@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SIDO_LIST, sigunguBySido } from "./lib/regionStatic.js";
 import { LANDMARKS } from "./lib/landmarks.js";
-import { cached } from "./lib/cache.js";
+import { cached, cacheStats } from "./lib/cache.js";
 import {
   fetchDongList,
   fetchLargeUpjong,
@@ -27,20 +27,49 @@ import { hasDb } from "./lib/db.js";
 const app = express();
 const PORT = process.env.PORT || 8788;
 
-app.use(express.json());
-app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  next();
-});
+// 요청 본문은 즐겨찾기 저장(label/mode/params)뿐이라 크게 받을 이유가 없다.
+app.use(express.json({ limit: "32kb" }));
+
+// CORS 헤더는 두지 않는다. 프런트와 API가 같은 출처(백엔드가 프런트를 함께 서빙)라
+// 필요가 없고, 예전에 있던 `Access-Control-Allow-Origin: *`는 Allow-Methods/Headers가
+// 없어서 조회만 열리고 쓰기는 어차피 preflight에서 막히는 어중간한 상태였다.
+// 다른 출처에서 쓸 일이 생기면 그때 필요한 헤더를 온전히 갖춰서 넣는 게 맞다.
 
 const FRONTEND_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "frontend");
 app.use(express.static(FRONTEND_DIR));
 
-app.get("/health", (req, res) => {
+// ── /health ──────────────────────────────────────────────────────────────────
+// 예전에는 "환경변수가 비어 있지 않은가"만 보고 초록불을 켰다. 그래서 Vercel에 엉뚱한
+// 문자열이 들어가 모든 조회가 403으로 죽는 동안에도 화면에는 "서비스키 설정됨"이 떴고,
+// 원인을 찾는 데 한참 돌아갔다. 이제 가장 가벼운 실API(업종 대분류)를 실제로 한 번 불러
+// 통하는 키인지 확인한다. 매 요청마다 부르면 낭비라 결과를 잠깐 들고 있는다.
+const KEY_PROBE_TTL_MS = 5 * 60 * 1000;
+let keyProbe = { at: 0, ok: null, error: null };
+
+async function probeServiceKey() {
+  if (Date.now() - keyProbe.at < KEY_PROBE_TTL_MS && keyProbe.ok !== null) return keyProbe;
+  try {
+    await fetchLargeUpjong();
+    keyProbe = { at: Date.now(), ok: true, error: null };
+  } catch (err) {
+    keyProbe = { at: Date.now(), ok: false, error: err.message.slice(0, 200) };
+  }
+  return keyProbe;
+}
+
+app.get("/health", async (req, res) => {
+  const configured = Boolean(
+    process.env.SEMAS_SERVICE_KEY && !process.env.SEMAS_SERVICE_KEY.includes("여기에_발급받은")
+  );
+  const probe = configured ? await probeServiceKey() : { ok: false, error: "서비스키가 설정되지 않았습니다." };
   res.json({
     ok: true,
-    hasKey: Boolean(process.env.SEMAS_SERVICE_KEY && !process.env.SEMAS_SERVICE_KEY.includes("여기에_발급받은")),
+    // hasKey는 "설정돼 있고 실제로 통한다"는 뜻이다. 프런트 배지가 이 값만 보고 판단한다.
+    hasKey: configured && probe.ok === true,
+    keyConfigured: configured,
+    keyError: probe.ok === false ? probe.error : null,
     hasDb: hasDb(),
+    cache: await cacheStats(),
     // 키 자체가 아니라 길이+해시 앞 8자리만 — 로컬과 배포 환경에 같은 키가 들어갔는지
     // 대조하는 용도다. 이 값으로는 키를 역산할 수 없다.
     key: serviceKeyFingerprint(),
@@ -137,9 +166,15 @@ function upjongFilter(query) {
 // 백 번쯤 돌리는 것만으로 하루치가 소진돼 앱 전체가 멈춘다.
 const TRADE_AREA_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+// analyzeStores()가 내보내는 필드 구성이 바뀌면 이 숫자를 올린다.
+// 안 올리면 형식을 바꿔도 **최대 7일 동안 옛 형식이 그대로 나간다** — 실제로 top3SmallShare를
+// 추가했을 때 캐시에 있던 구버전 응답이 나와서 프런트가 값을 못 찾는 일이 있었다.
+// 키가 달라지면 옛 항목은 아무도 안 읽게 되고, 캐시 청소가 알아서 걷어간다.
+const ANALYSIS_VERSION = 2;
+
 /** 같은 조건이면 같은 문자열이 나오도록 — 캐시 키. maxPages가 다르면 결과 표본도 다르니 키에 포함한다. */
 function tradeAreaCacheKey(parts) {
-  return parts.map((v) => (v == null || v === "" ? "-" : String(v))).join("_");
+  return [`v${ANALYSIS_VERSION}`, ...parts].map((v) => (v == null || v === "" ? "-" : String(v))).join("_");
 }
 
 /** 조회가 이상할 때 캐시를 우회할 escape hatch (`?refresh=1`). 7일 캐시를 기다릴 필요 없이 다시 받는다. */
@@ -199,9 +234,16 @@ app.get("/api/trade-area/radius", async (req, res) => {
   }
 });
 
+const STORE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 상가업소 상세도 분기 갱신이라 캐시가 안전하다
+
 app.get("/api/stores/:bizesId", async (req, res) => {
+  const { bizesId } = req.params;
+  // 상가업소 ID는 영숫자다. 형식이 아니면 실API를 부르기 전에 돌려보낸다.
+  if (!/^[A-Za-z0-9]{1,40}$/.test(bizesId)) {
+    return res.status(400).json({ error: "bizesId 형식이 올바르지 않습니다." });
+  }
   try {
-    const result = await fetchStoreOne(req.params.bizesId);
+    const result = await cached("store-one", bizesId, () => fetchStoreOne(bizesId), { ttlMs: STORE_TTL_MS });
     res.json({ item: result.items[0] ?? null });
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -223,19 +265,26 @@ app.get("/api/favorites", async (req, res) => {
 
 app.post("/api/favorites", async (req, res) => {
   const { label, mode, params } = req.body || {};
-  if (!label || !mode || !params) {
-    return res.status(400).json({ error: "label, mode, params가 필요합니다." });
+  if (typeof label !== "string" || !label.trim() || !["region", "radius"].includes(mode) || typeof params !== "object" || params === null) {
+    return res.status(400).json({ error: "label(문자열), mode(region|radius), params(객체)가 필요합니다." });
   }
   try {
-    res.json({ item: await createFavorite({ label, mode, params }) });
+    res.json({ item: await createFavorite({ label: label.trim(), mode, params }) });
   } catch (err) {
-    res.status(503).json({ error: err.message });
+    // 개수 상한 초과처럼 "요청이 잘못된" 경우와 DB가 없는 경우를 구분해서 돌려준다.
+    res.status(err.status ?? 503).json({ error: err.message });
   }
 });
 
 app.delete("/api/favorites/:id", async (req, res) => {
+  // id는 SERIAL(정수)이다. 숫자가 아니면 Postgres가 던지는 에러를 503(서버 장애)으로
+  // 내보내는 대신, 요청이 잘못됐다고 400으로 알려준다.
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: "id는 양의 정수여야 합니다." });
+  }
   try {
-    await deleteFavorite(req.params.id);
+    await deleteFavorite(id);
     res.json({ ok: true });
   } catch (err) {
     res.status(503).json({ error: err.message });

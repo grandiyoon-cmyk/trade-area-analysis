@@ -201,7 +201,9 @@ export async function fetchAllPages(fetchPage, { maxPages = 10 } = {}) {
     if (page.items.length === 0) break;
     if (totalCount != null && all.length >= totalCount) break;
     if (pageNo >= maxPages) {
-      capped = totalCount != null && all.length < totalCount;
+      // totalCount를 안 주는 응답에서도 "가득 찬 마지막 페이지"는 뒤에 더 있다는 뜻이다.
+      // 예전엔 이 경우 capped=false라 부분 데이터를 "전체 조회 완료"로 표시했다.
+      capped = totalCount != null ? all.length < totalCount : page.items.length > 0;
       break;
     }
     pageNo += 1;

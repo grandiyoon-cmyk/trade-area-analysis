@@ -10,7 +10,6 @@
     lcls: [], mcls: [], scls: [],
     selLcls: "", selMcls: "", selScls: "",
     landmarks: [],
-    lastResult: null,
     naverMapsClientId: null,
     favorites: [],
     favoritesAvailable: false,
@@ -59,10 +58,19 @@
     const badge = document.getElementById("liveBadge");
     try {
       const h = await api("/health");
-      badge.className = "live-badge " + (h.hasKey ? "is-ok" : "is-error");
-      badge.innerHTML = h.hasKey
-        ? `<b>백엔드 연결됨</b><span>서비스키 설정됨</span>`
-        : `<b>서비스키 없음</b><span>backend/.env에 SEMAS_SERVICE_KEY 필요</span>`;
+      // hasKey는 이제 "설정돼 있고 실제 API 호출에 성공했다"는 뜻이다. 설정은 됐는데
+      // 통하지 않는 경우(예전에 초록불로 잘못 표시되던 상황)를 따로 구분해 보여준다.
+      if (h.hasKey) {
+        badge.className = "live-badge is-ok";
+        badge.innerHTML = `<b>백엔드 연결됨</b><span>서비스키 확인됨</span>`;
+      } else if (h.keyConfigured) {
+        badge.className = "live-badge is-error";
+        badge.title = h.keyError || "";
+        badge.innerHTML = `<b>서비스키 오류</b><span>키가 설정돼 있지만 API가 거부했습니다</span>`;
+      } else {
+        badge.className = "live-badge is-error";
+        badge.innerHTML = `<b>서비스키 없음</b><span>backend/.env에 SEMAS_SERVICE_KEY 필요</span>`;
+      }
     } catch {
       badge.className = "live-badge is-error";
       badge.innerHTML = `<b>백엔드 연결 안 됨</b><span>backend에서 npm start 필요</span>`;
@@ -349,7 +357,6 @@
     runBtn.disabled = true;
     try {
       const data = await api(pathFromParams(state.mode, params));
-      state.lastResult = data;
       renderResults(data);
     } catch (err) {
       resultsEl.innerHTML = `<div class="error-banner"><b>분석 실패</b>${escapeText(err.message)}</div>`;
@@ -533,20 +540,22 @@
   /** 상위 3개 대분류까지만 카테고리컬 색을 쓰고 나머지는 회색 "기타"로 묶는 컬러러.
    *  all-pairs 산점도/지도 마커는 카테고리컬 색상을 3개까지만 써야 CVD 안전성이 보장된다
    *  (dataviz 스킬 규칙) — 좌표 산점도와 지도 마커 양쪽에서 재사용해 색 배정을 일치시킨다. */
+  // 카테고리컬 색 슬롯은 한 곳에서만 정의한다 — 예전엔 이 배열이 topCategoryColorer와
+  // categoryLegend 양쪽에 각각 있어서, 한쪽만 고치면 지도 점 색과 범례 색이 조용히 어긋났다.
+  const CATEGORY_COLOR_VARS = ["--series-1", "--series-2", "--series-3"];
+
   function topCategoryColorer(byLarge) {
     const top3 = byLarge.slice(0, 3);
-    const colorVars = ["--series-1", "--series-2", "--series-3"];
-    const codeToVar = new Map(top3.map((r, i) => [r.code, colorVars[i]]));
+    const codeToVar = new Map(top3.map((r, i) => [r.code, CATEGORY_COLOR_VARS[i]]));
     return { colorVarFor: (code) => codeToVar.get(code) || "--series-other", top3 };
   }
 
   function categoryLegend(container, byLarge) {
     const legend = document.createElement("div");
     legend.className = "scatter-legend";
-    const colorVars = ["--series-1", "--series-2", "--series-3"];
     byLarge.slice(0, 3).forEach((r, i) => {
       const item = document.createElement("span");
-      item.innerHTML = `<span class="legend-swatch" style="background:${cssVar(colorVars[i])}"></span>${escapeText(r.name)} (${num(r.count)})`;
+      item.innerHTML = `<span class="legend-swatch" style="background:${cssVar(CATEGORY_COLOR_VARS[i])}"></span>${escapeText(r.name)} (${num(r.count)})`;
       legend.appendChild(item);
     });
     if (byLarge.length > 3) {
@@ -660,7 +669,18 @@
    * 클릭은 캔버스가 pointer-events:none 이라 지도로 그대로 통과하고, 지도의 click
    * 이벤트에서 좌표를 픽셀로 바꿔 가장 가까운 점을 찾는 방식으로 처리한다.
    */
-  function createPointsOverlay(points, colorHexFor, surfaceHex) {
+  // 지도 위 점의 테두리 색. **테마 토큰을 쓰면 안 된다.**
+  // 이 테두리는 앱 배경이 아니라 네이버 지도 타일 위에 그려지는데, 지도 타일은 사용자가
+  // 다크모드를 켜도 항상 밝다. 예전엔 --surface-1(다크에서 #1a1a19, 거의 검정)을 써서
+  // 다크모드일 때 밝은 지도 위에 검은 테두리가 깔려 점이 뭉개져 보였다.
+  const MAP_DOT_RING = "#ffffff";
+
+  function createPointsOverlay(points, colorHexFor) {
+    // 좌표 객체는 한 번만 만들어 재사용한다. draw()는 지도를 끌거나 확대할 때마다 불리는데,
+    // 매번 새로 만들면 표본 2,445개 기준 4.5ms(재사용 시 2.7ms)가 들고, 표본 상한인
+    // 1만 개에서는 60fps 예산(16.7ms)을 넘긴다.
+    const coords = points.map((p) => new naver.maps.LatLng(p.lat, p.lon));
+
     function PointsOverlay() {
       const cv = document.createElement("canvas");
       cv.style.position = "absolute";
@@ -701,31 +721,32 @@
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, size.width, size.height);
       ctx.lineWidth = 1.5;
-      ctx.strokeStyle = surfaceHex;
+      ctx.strokeStyle = MAP_DOT_RING;
 
       const pad = MARKER_R + 2;
-      for (const p of points) {
-        const pt = proj.fromCoordToOffset(new naver.maps.LatLng(p.lat, p.lon));
+      for (let i = 0; i < points.length; i++) {
+        const pt = proj.fromCoordToOffset(coords[i]);
         const x = pt.x - origin.x, y = pt.y - origin.y;
         if (x < -pad || y < -pad || x > size.width + pad || y > size.height + pad) continue; // 화면 밖은 건너뛴다
         ctx.beginPath();
         ctx.arc(x, y, MARKER_R, 0, Math.PI * 2);
-        ctx.fillStyle = colorHexFor(p.largeCd);
+        ctx.fillStyle = colorHexFor(points[i].largeCd);
         ctx.fill();
         ctx.stroke();
       }
     };
+    PointsOverlay.prototype.coords = coords; // 클릭 판정에서 같은 배열을 재사용한다
     return new PointsOverlay();
   }
 
   /** 클릭 지점에서 CLICK_SLOP 픽셀 안에 있는 점포 중 가장 가까운 것 */
-  function findPointNear(map, proj, points, coord) {
+  function findPointNear(proj, points, coords, coord) {
     const target = proj.fromCoordToOffset(coord);
     let best = null, bestD2 = (CLICK_SLOP + MARKER_R) ** 2;
-    for (const p of points) {
-      const pt = proj.fromCoordToOffset(new naver.maps.LatLng(p.lat, p.lon));
+    for (let i = 0; i < points.length; i++) {
+      const pt = proj.fromCoordToOffset(coords[i]);
       const d2 = (pt.x - target.x) ** 2 + (pt.y - target.y) ** 2;
-      if (d2 <= bestD2) { bestD2 = d2; best = p; }
+      if (d2 <= bestD2) { bestD2 = d2; best = points[i]; }
     }
     return best;
   }
@@ -794,7 +815,6 @@
 
     const { colorVarFor } = topCategoryColorer(byLarge);
     const colorHexFor = (code) => cssVar(colorVarFor(code));
-    const surfaceHex = cssVar("--surface-1");
 
     // reduce로 최소/최대를 구한다 — Math.min(...arr)은 표본이 1만 건이면 인자 개수 한계에 닿는다.
     const b = points.reduce(
@@ -812,14 +832,14 @@
     const map = new naver.maps.Map(mapEl, { center: bounds.getCenter(), zoom: 15 });
     map.fitBounds(bounds);
 
-    const overlay = createPointsOverlay(points, colorHexFor, surfaceHex);
+    const overlay = createPointsOverlay(points, colorHexFor);
     overlay.setMap(map);
 
     if (!naverInfoWindow) naverInfoWindow = new naver.maps.InfoWindow({ content: " " });
     naver.maps.Event.addListener(map, "click", (e) => {
       const proj = overlay.getProjection();
       if (!proj) return;
-      const hit = findPointNear(map, proj, points, e.coord);
+      const hit = findPointNear(proj, points, overlay.coords, e.coord);
       if (!hit) return naverInfoWindow.close();
       naverInfoWindow.setContent(
         `<div style="padding:8px 10px;font-size:12.5px;line-height:1.5;max-width:220px">` +
@@ -899,7 +919,14 @@
     const kpiRow = document.createElement("div");
     kpiRow.className = "kpi-row";
     kpiRow.appendChild(kpiTile("표본 점포 수", num(data.fetchedCount) + "개", data.capped ? `전체 ${num(data.totalCount)}개 중 표본` : "전체 조회 완료"));
-    kpiRow.appendChild(kpiTile("업종 다양성", data.diversity != null ? pct(data.diversity) : "—", "소분류 종류 수 ÷ 점포 수"));
+    // "소분류 종류 수 ÷ 점포 수"(다양성)를 쓰다가 상위 3개 업종 점유율로 바꿨다. 다양성은
+    // 표본이 커질수록 자동으로 작아져서, 넓은 지역과 좁은 동네를 나란히 비교할 수 없었다.
+    // 점유율은 비율이라 표본 크기에 흔들리지 않고 그대로 읽힌다(높을수록 쏠린 상권).
+    kpiRow.appendChild(kpiTile(
+      "업종 쏠림",
+      data.top3SmallShare != null ? pct(data.top3SmallShare) : "—",
+      data.top3SmallNames?.length ? `상위 3개: ${data.top3SmallNames.join(" · ")}` : "상위 3개 소분류 점유율"
+    ));
     kpiRow.appendChild(kpiTile("최다 업종(대분류)", data.byLarge[0]?.name ?? "—", data.byLarge[0] ? num(data.byLarge[0].count) + "개" : null));
     kpiRow.appendChild(kpiTile("데이터 기준", stdrYmLabel(data.stdrYm), "소진공 분기별 갱신"));
     resultsEl.appendChild(kpiRow);

@@ -17,12 +17,24 @@ export async function listFavorites() {
   return rows;
 }
 
+// 아직 로그인이 없어서 이 목록은 주소를 아는 사람 누구나 쓸 수 있다. 그래서 최소한의
+// 남용 방지선을 둔다 — 무한정 쌓이면 DB 용량(즐겨찾기와 캐시가 같은 DB를 쓴다)을 먹고,
+// 목록도 못 쓰게 된다. 로그인을 붙이면 사용자별로 다시 계산하면 된다.
+export const MAX_FAVORITES = 200;
+export const MAX_LABEL_LENGTH = 80;
+
 export async function createFavorite({ label, mode, params }) {
   await ensureSchema();
   const sql = getSql();
+  const [{ count }] = await sql`SELECT count(*)::int AS count FROM favorites`;
+  if (count >= MAX_FAVORITES) {
+    const err = new Error(`즐겨찾기는 최대 ${MAX_FAVORITES}개까지 저장할 수 있습니다. 쓰지 않는 항목을 지운 뒤 다시 시도하세요.`);
+    err.status = 409;
+    throw err;
+  }
   const rows = await sql`
     INSERT INTO favorites (label, mode, params)
-    VALUES (${label}, ${mode}, ${JSON.stringify(params)}::jsonb)
+    VALUES (${label.slice(0, MAX_LABEL_LENGTH)}, ${mode}, ${JSON.stringify(params)}::jsonb)
     RETURNING id, label, mode, params, created_at
   `;
   return rows[0];

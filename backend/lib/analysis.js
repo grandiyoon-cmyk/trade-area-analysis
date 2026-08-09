@@ -47,8 +47,18 @@ export function analyzeStores(items, meta = {}) {
   }
   const bbox = points.length ? { minLon, maxLon, minLat, maxLat } : null;
 
-  // 업종 다양성: 등장한 소분류 수 / 전체 점포 수. 값이 낮을수록 특정 업종에 쏠린 상권.
+  // 업종 다양성(= 소분류 종류 수 ÷ 점포 수)은 **표본이 커질수록 자동으로 작아진다.**
+  // 종류 수는 업종 가짓수(247개)에 막혀 포화되는데 분모는 계속 늘기 때문이다. 그래서
+  // 5,000건까지 긁어온 넓은 지역과 300건짜리 동네를 나란히 놓으면, 낮은 쪽이 "업종이
+  // 쏠렸다"가 아니라 그냥 "표본이 컸다"는 뜻이 돼버린다. 지역 간 비교에 쓸 수 없다.
+  //
+  // 대신 화면에는 **상위 3개 소분류의 점유율**을 쓴다. 비율이라 표본 크기에 흔들리지 않고,
+  // "상위 3개 업종이 전체의 45%" 처럼 그대로 읽히기도 한다. 값이 높을수록 쏠린 상권이다.
+  // (diversity는 기존 응답 호환을 위해 남겨두되 화면의 대표 지표에서는 뺐다)
   const diversity = items.length ? bySmall.length / items.length : null;
+  const top3SmallShare = items.length
+    ? bySmall.slice(0, 3).reduce((sum, r) => sum + r.count, 0) / items.length
+    : null;
 
   return {
     stdrYm: meta.stdrYm ?? null, // semasClient 응답 header의 데이터 기준년월(YYYYMM)
@@ -63,6 +73,8 @@ export function analyzeStores(items, meta = {}) {
     byMiddleTotal: byMiddle.length,
     bySmallTotal: bySmall.length,
     diversity,
+    top3SmallShare,
+    top3SmallNames: bySmall.slice(0, 3).map((r) => r.name),
     bbox,
     points,
   };

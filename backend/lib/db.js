@@ -44,9 +44,16 @@ export function ensureSchema() {
           key         TEXT NOT NULL,
           value       JSONB NOT NULL,
           updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+          expires_at  TIMESTAMPTZ NULL,
           PRIMARY KEY (namespace, key)
         )
       `;
+      // 이미 만들어진 테이블에는 expires_at이 없다. 만료 시각을 행에 직접 적어둬야
+      // "지금 지워도 되는 행"을 SQL 한 줄로 골라낼 수 있다(네임스페이스마다 TTL이 달라서
+      // 조회 시점의 ttlMs만으로는 청소를 할 수 없다). NULL이면 만료 없음(코드표 등).
+      await sql`ALTER TABLE cache_entries ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ NULL`;
+      // 청소 쿼리가 매번 전체 스캔하지 않도록.
+      await sql`CREATE INDEX IF NOT EXISTS cache_entries_expires_idx ON cache_entries (expires_at) WHERE expires_at IS NOT NULL`;
       await sql`
         CREATE TABLE IF NOT EXISTS favorites (
           id          SERIAL PRIMARY KEY,
