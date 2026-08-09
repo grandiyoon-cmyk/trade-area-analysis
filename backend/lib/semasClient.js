@@ -113,6 +113,12 @@ async function call(operation, params) {
   const header = root?.header ?? {};
   const body = root?.body ?? {};
   const resultCode = header.resultCode;
+  // 03(NODATA_ERROR)은 "조건에 맞는 데이터가 없다"는 뜻이지 장애가 아니다. 예외로 던지면
+  // 라우트가 502를 내보내서, 없는 상가업소를 조회했을 뿐인데 서버가 고장난 것처럼 보인다.
+  // 빈 결과로 정상 처리한다.
+  if (resultCode === "03") {
+    return { items: [], totalCount: 0, pageNo: null, numOfRows: null, stdrYm: header.stdrYm ?? null };
+  }
   if (resultCode != null && resultCode !== "00") {
     const friendly = RESULT_CODE_MESSAGES[resultCode];
     throw new Error(
