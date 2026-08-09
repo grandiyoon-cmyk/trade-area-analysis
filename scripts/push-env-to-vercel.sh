@@ -20,27 +20,42 @@ ENV_FILE="backend/.env"
 
 [ -f "$ENV_FILE" ] || { echo "❌ $ENV_FILE 이 없습니다."; exit 1; }
 
-# = 뒤 전체를 값으로 취급하고 따옴표만 벗긴다. 키 자체는 절대 출력하지 않는다.
-KEY="$(grep -m1 '^SEMAS_SERVICE_KEY=' "$ENV_FILE" | cut -d= -f2- | sed 's/^["'"'"']//; s/["'"'"']$//')"
+# .env에서 변수 하나를 읽는다. = 뒤 전체를 값으로 취급하고 따옴표만 벗긴다.
+# 값 자체는 절대 출력하지 않는다 — 길이와 해시 앞 8자리만 보여준다.
+read_env() {
+  grep -m1 "^$1=" "$ENV_FILE" | cut -d= -f2- | sed 's/^["'"'"']//; s/["'"'"']$//'
+}
 
-[ -n "$KEY" ] || { echo "❌ $ENV_FILE 에서 SEMAS_SERVICE_KEY 를 못 찾았습니다."; exit 1; }
+# 여기에 나열된 것만 올린다. .env에 비어 있는 항목은 알아서 건너뛴다.
+VARS="SEMAS_SERVICE_KEY NAVER_MAPS_CLIENT_ID NAVER_MAPS_CLIENT_SECRET"
 
-# 이 지문이 배포 후 /health 의 sha8 과 같아야 성공이다.
-FP="$(printf '%s' "$KEY" | shasum -a 256 | cut -c1-8)"
-echo "올릴 키: ${#KEY}자 · sha8 $FP"
-echo
+SEMAS_FP=""
+UPLOADED=0
 
-for TARGET in production preview development; do
-  echo "── $TARGET ──"
-  # 이미 있으면 지운다(없으면 조용히 넘어감). Vercel은 같은 이름을 덮어쓰지 않고 중복 등록한다.
-  npx --yes vercel env rm SEMAS_SERVICE_KEY "$TARGET" --yes 2>/dev/null || true
-  printf '%s' "$KEY" | npx --yes vercel env add SEMAS_SERVICE_KEY "$TARGET"
+for NAME in $VARS; do
+  VALUE="$(read_env "$NAME")"
+  if [ -z "$VALUE" ]; then
+    echo "⏭  $NAME — .env에 비어 있어 건너뜁니다."
+    continue
+  fi
+  FP="$(printf '%s' "$VALUE" | shasum -a 256 | cut -c1-8)"
+  [ "$NAME" = "SEMAS_SERVICE_KEY" ] && SEMAS_FP="$FP"
+  echo "📤 $NAME — ${#VALUE}자 · sha8 $FP"
+  for TARGET in production preview development; do
+    # 이미 있으면 지운다(없으면 조용히 넘어감). Vercel은 같은 이름을 덮어쓰지 않고 중복 등록한다.
+    npx --yes vercel env rm "$NAME" "$TARGET" --yes >/dev/null 2>&1 || true
+    printf '%s' "$VALUE" | npx --yes vercel env add "$NAME" "$TARGET" >/dev/null
+  done
+  echo "   → production / preview / development 등록 완료"
+  UPLOADED=$((UPLOADED + 1))
 done
+
+[ "$UPLOADED" -gt 0 ] || { echo "❌ 올릴 값이 하나도 없습니다. $ENV_FILE 을 확인하세요."; exit 1; }
 
 echo
 echo "환경변수 업로드 완료. 이제 재배포합니다 (환경변수는 새 배포에만 적용됨)."
 npx --yes vercel --prod --yes
 
 echo
-echo "✅ 끝났습니다. 아래 명령으로 확인하세요 — sha8 이 $FP 이면 성공입니다:"
-echo "   curl -s https://trade-area-analysis-grandiyoon-cmyks-projects.vercel.app/health"
+echo "✅ 끝났습니다. 아래 명령으로 확인하세요${SEMAS_FP:+ — 서비스키 sha8 이 $SEMAS_FP 이면 성공입니다}:"
+echo "   curl -s https://trade-area-analysis-theta.vercel.app/health"

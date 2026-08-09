@@ -48,8 +48,14 @@ app.get("/health", (req, res) => {
 });
 
 // 프런트가 필요로 하는 "공개해도 되는" 설정값만 모아 전달.
-// 네이버 지도 Client ID는 시크릿이 아니라(브라우저 스크립트 태그에 그대로 노출되는 값이고,
-// 보안은 NCP 콘솔의 웹 서비스 URL 등록/도메인 제한으로 한다) 그냥 JSON으로 내려줘도 된다.
+//
+// 네이버 지도 Client ID는 시크릿이 아니다 — 어차피 브라우저의 <script src="...?ncpKeyId=">에
+// 그대로 박혀서 개발자도구로 다 보인다. 도용 방지는 값을 숨기는 게 아니라 NCP 콘솔의
+// "Web 서비스 URL" 등록으로 한다. 그래서 JSON으로 내려줘도 된다.
+//
+// ⚠️ 반대로 NAVER_MAPS_CLIENT_SECRET은 **절대 여기 넣지 말 것.** 그건 Geocoding 같은
+// 서버 호출용 API의 자격증명이라, 이 응답에 실리는 순간 브라우저를 통해 전 세계에 공개된다.
+// 이 엔드포인트에 값을 추가할 때는 "개발자도구로 보여도 괜찮은가"를 먼저 자문할 것.
 app.get("/api/config", (req, res) => {
   res.json({ naverMapsClientId: process.env.NAVER_MAPS_CLIENT_ID || null });
 });
