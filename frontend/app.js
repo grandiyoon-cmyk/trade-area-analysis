@@ -403,9 +403,20 @@
     const seq = ++scopeSeq;
     const params = currentParams();
     clearTimeout(scopeTimer);
+
+    // 캐시가 비어 있으면 건수 조회에 1초쯤 걸린다(실측 1.07초, 캐시 히트 0.24초).
+    // 그동안 안내가 빈 채로 있으면 "경고가 사라졌다가 다시 나타나는" 것처럼 보인다.
+    // 그렇다고 곧바로 "확인 중"을 띄우면 캐시 히트일 때 깜빡이므로, 400ms 넘게
+    // 걸릴 때만 보여준다.
+    const pending = setTimeout(() => {
+      if (seq === scopeSeq) setNotice("건수 확인 중…", null);
+    }, 400);
+    const done = () => clearTimeout(pending);
+
     scopeTimer = setTimeout(async () => {
       try {
         const r = await api(pathFromParams(state.mode, params, "count"));
+        done();
         if (seq !== scopeSeq) return; // 그 사이 조건이 또 바뀌었으면 버린다
         if (r.totalCount == null) return;
         if (r.totalCount === 0) {
@@ -420,6 +431,7 @@
           setNotice(`이 조건은 약 ${num(r.totalCount)}건 — 전량 집계됩니다.`, "ok");
         }
       } catch {
+        done();
         if (seq === scopeSeq) setNotice("", null); // 건수를 못 받아와도 분석 자체는 막지 않는다
       }
     }, 350);
