@@ -12,22 +12,22 @@
 
   <header class="masthead">
     <div class="masthead-title">
-      <p class="eyebrow-mark">Trade Area Analysis · SEMAS OpenAPI</p>
-      <h1>우리 동네 상권분석</h1>
-      <p class="masthead-desc">소상공인시장진흥공단 상가(상권)정보로 지역·반경 안 점포 밀도와 업종 분포를 확인하세요.</p>
+      <p class="eyebrow-mark">소상공인시장진흥공단 상가정보 · 분기 갱신</p>
+      <h1>이 동네엔 뭐가 몇 개 있나</h1>
+      <p class="masthead-desc">행정동이나 반경을 정하면 그 안의 점포를 전부 세어, 어디에 몰려 있고 어떤 업종이 많은지 보여줍니다.</p>
     </div>
     <div class="live-badge" id="liveBadge" aria-live="polite">
-      <b>연결 확인 중…</b>
-      <span>backend 상태</span>
+      <b>연결 확인 중</b>
+      <span>backend</span>
     </div>
   </header>
+
+  <div class="deck">
 
   <div class="mode-tabs" role="tablist" aria-label="분석 방식">
     <button class="mode-tab is-active" id="tabRegion" role="tab" aria-selected="true">지역으로 찾기</button>
     <button class="mode-tab" id="tabRadius" role="tab" aria-selected="false">반경으로 찾기</button>
   </div>
-
-  <div class="favorites-bar" id="favoritesBar" aria-label="즐겨찾기"></div>
 
   <div class="controls-card">
 
@@ -80,17 +80,21 @@
         <span class="field-label">소분류 <span class="field-optional">(선택)</span></span>
         <select id="selScls" disabled><option value="">중분류 먼저 선택</option></select>
       </label>
-      <button class="save-fav-btn" id="saveFavBtn" type="button" title="현재 조건을 즐겨찾기에 저장">☆ 저장</button>
+      <button class="save-fav-btn" id="saveFavBtn" type="button" title="지금 조건을 즐겨찾기에 저장">☆ 저장</button>
       <button class="run-btn" id="runBtn" type="button">분석하기</button>
     </div>
 
   </div>
 
+  <div class="favorites-bar" id="favoritesBar" aria-label="즐겨찾기"></div>
+
+  </div><!-- /.deck -->
+
   <main class="results" id="results" aria-live="polite">
     <div class="landing-hero">
-      <p class="eyebrow-mark">Getting Started</p>
-      <h2 class="landing-title">지역 또는 반경을 고르고 분석하기를 눌러보세요</h2>
-      <p class="landing-desc">왼쪽 위 탭에서 "지역으로 찾기"(시·도 → 시·군·구 → 행정동) 또는 "반경으로 찾기"(즐겨찾는 위치 또는 좌표 직접 입력)를 고른 뒤, 필요하면 업종을 좁히고 분석하기를 누르세요.</p>
+      <p class="eyebrow-mark">시작하기</p>
+      <h2 class="landing-title">시·도부터 좁혀 내려가거나, 지도 위 한 점을 중심으로 반경을 잡으세요.</h2>
+      <p class="landing-desc">업종은 안 골라도 됩니다 — 비워두면 그 안의 모든 점포를 셉니다. 자주 보는 조건은 저장해두고 한 번에 다시 불러올 수 있습니다.</p>
     </div>
   </main>
 

@@ -913,6 +913,53 @@
     });
   }
 
+  /**
+   * 구성 막대 — 이 화면의 시그니처.
+   * "여기 뭐가 몰려 있나"가 이 도구가 답하는 질문이라, 결과를 열자마자 상권의 업종 구성이
+   * 한 줄로 들어오게 한다. 상위 3개 대분류 + 기타로 묶는 건 지도 마커·산점도와 같은 규칙이고
+   * (카테고리컬 색은 3개까지만), 색만으로 구분되지 않도록 이름과 비율을 직접 라벨로 단다.
+   */
+  function renderComposition(container, byLarge, total) {
+    if (!byLarge.length || !total) return;
+    const top3 = byLarge.slice(0, 3);
+    const restCount = byLarge.slice(3).reduce((s, r) => s + r.count, 0);
+    const segments = top3.map((r, i) => ({ name: r.name, count: r.count, colorVar: CATEGORY_COLOR_VARS[i] }));
+    if (restCount > 0) segments.push({ name: "기타 업종", count: restCount, colorVar: "--series-other" });
+
+    const wrap = document.createElement("section");
+    wrap.className = "composition";
+    wrap.innerHTML = `<p class="eyebrow-mark">업종 구성 · 대분류 기준</p>`;
+
+    const bar = document.createElement("div");
+    bar.className = "composition-bar";
+    bar.setAttribute("role", "img");
+    bar.setAttribute("aria-label", segments.map((s) => `${s.name} ${Math.round((s.count / total) * 100)}%`).join(", "));
+    segments.forEach((s, i) => {
+      const seg = document.createElement("div");
+      seg.className = "composition-seg";
+      seg.style.flex = `${s.count} 0 0`;
+      seg.style.background = cssVar(s.colorVar);
+      seg.style.animationDelay = `${i * 70}ms`;
+      seg.title = `${s.name} · ${num(s.count)}개`;
+      bar.appendChild(seg);
+    });
+    wrap.appendChild(bar);
+
+    const keys = document.createElement("div");
+    keys.className = "composition-keys";
+    segments.forEach((s) => {
+      const k = document.createElement("span");
+      k.className = "composition-key";
+      k.innerHTML =
+        `<span class="swatch" style="background:${cssVar(s.colorVar)}"></span>` +
+        `<span class="nm">${escapeText(s.name)}</span>` +
+        `<span class="pc">${pct(s.count / total)} · ${num(s.count)}개</span>`;
+      keys.appendChild(k);
+    });
+    wrap.appendChild(keys);
+    container.appendChild(wrap);
+  }
+
   function renderResults(data) {
     resultsEl.innerHTML = "";
 
@@ -928,8 +975,10 @@
       data.top3SmallNames?.length ? `상위 3개: ${data.top3SmallNames.join(" · ")}` : "상위 3개 소분류 점유율"
     ));
     kpiRow.appendChild(kpiTile("최다 업종(대분류)", data.byLarge[0]?.name ?? "—", data.byLarge[0] ? num(data.byLarge[0].count) + "개" : null));
-    kpiRow.appendChild(kpiTile("데이터 기준", stdrYmLabel(data.stdrYm), "소진공 분기별 갱신"));
+    kpiRow.appendChild(kpiTile("데이터 기준", stdrYmLabel(data.stdrYm), "분기마다 갱신"));
     resultsEl.appendChild(kpiRow);
+
+    renderComposition(resultsEl, data.byLarge, data.fetchedCount);
 
     if (data.capped) {
       const warn = document.createElement("div");
