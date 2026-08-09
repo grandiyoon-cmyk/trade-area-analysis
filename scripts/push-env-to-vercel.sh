@@ -8,6 +8,13 @@
 # 쓰기 전에 한 번만: npx vercel login  →  npx vercel link
 set -euo pipefail
 
+# 기본 npm 캐시(~/.npm)에 root 소유 파일이 섞여 있으면 npx가 EACCES로 죽는다.
+# 예전에 sudo로 npm을 한 번 돌린 흔적인데, 고치려면 sudo가 필요하다.
+# 여기서는 사용자 소유가 확실한 별도 캐시를 써서 비밀번호 없이 우회한다.
+# (~/.npm을 직접 고치고 싶다면: sudo chown -R "$(id -u):$(id -g)" ~/.npm)
+export npm_config_cache="${npm_config_cache:-$HOME/.npm-cache}"
+mkdir -p "$npm_config_cache"
+
 cd "$(dirname "$0")/.."
 ENV_FILE="backend/.env"
 
