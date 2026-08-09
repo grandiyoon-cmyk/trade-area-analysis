@@ -58,6 +58,10 @@ export function analyzeStores(items, meta = {}) {
     byLarge,
     byMiddle: byMiddle.slice(0, 15),
     bySmall: bySmall.slice(0, 15),
+    // 자르기 전 종류 수. 프런트가 "Top 15"라고 쓸지 "분포"라고 쓸지 판단하는 데 쓴다 —
+    // 잘린 목록의 length만 보면 15개가 전부인지 더 있는지 구분할 수 없다.
+    byMiddleTotal: byMiddle.length,
+    bySmallTotal: bySmall.length,
     diversity,
     bbox,
     points,

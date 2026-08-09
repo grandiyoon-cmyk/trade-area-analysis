@@ -922,9 +922,16 @@
     rankedBarList(largeBody, data.byLarge);
     resultsEl.appendChild(largeCard);
 
+    // 중분류/소분류로 필터를 걸면 결과에 남는 중분류가 한두 개뿐인데, 그때도 제목이
+    // "Top 15"면 나머지 14개가 잘린 것처럼 읽힌다. 실제 개수에 맞춰 제목을 바꾼다.
     const middleCard = document.createElement("div");
     middleCard.className = "result-card";
-    middleCard.innerHTML = `<div class="result-card-head"><h3>업종 중분류 Top 15</h3></div>`;
+    // byMiddleTotal은 서버가 자르기 전 종류 수. byMiddle.length만 보면 15개가 전부인지
+    // 더 있는데 잘린 건지 구분할 수 없다. (구버전 응답 호환: 값이 없으면 length로 대체)
+    const middleTotal = data.byMiddleTotal ?? data.byMiddle.length;
+    const middleTitle = middleTotal > 15 ? "업종 중분류 Top 15" : "업종 중분류 분포";
+    const middleSub = middleTotal > 15 ? `전체 ${num(middleTotal)}종 중 상위 15종` : `${num(middleTotal)}종`;
+    middleCard.innerHTML = `<div class="result-card-head"><h3>${middleTitle}</h3><span class="kpi-sub">${middleSub}</span></div>`;
     const middleBody = document.createElement("div");
     middleCard.appendChild(middleBody);
     rankedBarList(middleBody, data.byMiddle);
